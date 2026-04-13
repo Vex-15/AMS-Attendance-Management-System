@@ -3,26 +3,20 @@
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Alert, AlertDescription } from '@/components/ui/alert';
-import { AlertCircle } from 'lucide-react';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Label } from 'recharts';
+import { AlertCircle, LayoutDashboard, TrendingUp, Database, Users, BookOpen, GraduationCap, Calendar } from 'lucide-react';
 import AdminNav from '@/components/admin-nav';
-import { getDB, initializeDB } from '@/lib/db';
+import { initializeDB } from '@/lib/db';
 
 export default function AdminDashboard() {
   const router = useRouter();
   const { user, isAuthenticated, logout } = useAuth();
 
   useEffect(() => {
-    if (!isAuthenticated || user?.role !== 'admin') {
-      router.push('/');
-      return;
-    }
+    if (!isAuthenticated || user?.role !== 'admin') { router.push('/'); return; }
   }, [isAuthenticated, user, router]);
 
-  // Initialize DB and get stats
   const db = initializeDB();
   const stats = {
     totalUsers: db.users.size,
@@ -31,255 +25,184 @@ export default function AdminDashboard() {
     totalSubjects: db.subjects.size,
     totalEnrollments: db.enrollments.size,
     totalLectures: db.lectures.size,
-    totalAttendanceRecords: db.attendance.size,
+    totalAttendance: db.attendance.size,
   };
 
-  const students = Array.from(db.students.values()).slice(0, 10);
-  const teachers = Array.from(db.teachers.values());
-  const subjects = Array.from(db.subjects.values()).slice(0, 10);
+  // Monthly trend (last 6 months)
+  const monthlyTrend = (() => {
+    const today = new Date();
+    const months: { month: string; percentage: number }[] = [];
+    const allAttendance = Array.from(db.attendance.values());
+    const allLectures = Array.from(db.lectures.values());
+
+    for (let i = 5; i >= 0; i--) {
+      const monthDate = new Date(today.getFullYear(), today.getMonth() - i, 1);
+      const monthEnd = new Date(today.getFullYear(), today.getMonth() - i + 1, 0);
+      const monthName = monthDate.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+
+      const monthLectures = allLectures.filter(l => l.date >= monthDate && l.date <= monthEnd);
+      const lectureIds = new Set(monthLectures.map(l => l.id));
+      const monthAtt = allAttendance.filter(a => lectureIds.has(a.lectureId));
+      const present = monthAtt.filter(a => a.status === 'present').length;
+      const pct = monthAtt.length > 0 ? Math.round((present / monthAtt.length) * 100 * 100) / 100 : 0;
+      months.push({ month: monthName, percentage: pct });
+    }
+    return months;
+  })();
+
+  const ChartTooltip = ({ active, payload, label }: any) => {
+    if (active && payload?.length) {
+      return (
+        <div className="glass-card rounded-lg px-3 py-2 text-xs">
+          <p className="text-white font-medium">{label}</p>
+          {payload.map((p: any, i: number) => (
+            <p key={i} style={{ color: p.color }}>{p.name}: {p.value}%</p>
+          ))}
+        </div>
+      );
+    }
+    return null;
+  };
+
+  const statCards = [
+    { label: 'Users', value: stats.totalUsers, icon: Users, color: 'text-blue-400' },
+    { label: 'Students', value: stats.totalStudents, icon: GraduationCap, color: 'text-cyan-400' },
+    { label: 'Teachers', value: stats.totalTeachers, icon: BookOpen, color: 'text-violet-400' },
+    { label: 'Subjects', value: stats.totalSubjects, icon: Database, color: 'text-amber-400' },
+  ];
+
+  const dataCards = [
+    { label: 'Enrollments', value: stats.totalEnrollments, icon: Users },
+    { label: 'Lectures', value: stats.totalLectures, icon: Calendar },
+    { label: 'Attendance Records', value: stats.totalAttendance, icon: Database },
+  ];
 
   return (
     <div className="min-h-screen bg-background">
       <AdminNav userName={user?.name || 'Admin'} onLogout={logout} />
 
       <main className="p-4 md:p-8 max-w-7xl mx-auto">
-        {/* Header */}
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold mb-2">System Administration</h1>
-          <p className="text-muted-foreground">Monitor and manage the entire MITAOE attendance system</p>
+        <div className="mb-6">
+          <h1 className="text-2xl font-bold text-white flex items-center gap-2">
+            <LayoutDashboard className="w-6 h-6 text-amber-400" />
+            System Administration
+          </h1>
+          <p className="text-sm text-slate-400 mt-0.5">Monitor the MITAOE attendance system</p>
         </div>
 
         <Tabs defaultValue="overview" className="space-y-6">
-          <TabsList>
-            <TabsTrigger value="overview">Overview</TabsTrigger>
-            <TabsTrigger value="database">Database Stats</TabsTrigger>
-            <TabsTrigger value="users">Users</TabsTrigger>
+          <TabsList className="bg-white/5 border border-white/10 p-1 rounded-lg">
+            <TabsTrigger value="overview" className="text-xs data-[state=active]:bg-white/10 data-[state=active]:text-white rounded-md">Overview</TabsTrigger>
+            <TabsTrigger value="trends" className="text-xs data-[state=active]:bg-white/10 data-[state=active]:text-white rounded-md">Trends</TabsTrigger>
+            <TabsTrigger value="data" className="text-xs data-[state=active]:bg-white/10 data-[state=active]:text-white rounded-md">Data</TabsTrigger>
           </TabsList>
 
-          {/* Overview Tab */}
           <TabsContent value="overview" className="space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-sm font-medium text-muted-foreground">Total Users</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-3xl font-bold">{stats.totalUsers}</div>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-sm font-medium text-muted-foreground">Students</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-3xl font-bold">{stats.totalStudents}</div>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-sm font-medium text-muted-foreground">Teachers</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-3xl font-bold">{stats.totalTeachers}</div>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-sm font-medium text-muted-foreground">Subjects</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-3xl font-bold">{stats.totalSubjects}</div>
-                </CardContent>
-              </Card>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 stagger-children">
+              {statCards.map((card, i) => {
+                const Icon = card.icon;
+                return (
+                  <div key={i} className="glass-card-hover rounded-xl p-5">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Icon className={`w-4 h-4 ${card.color}`} />
+                      <span className="text-xs text-slate-400 font-medium">{card.label}</span>
+                    </div>
+                    <p className="text-3xl font-bold text-white">{card.value.toLocaleString()}</p>
+                  </div>
+                );
+              })}
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-sm font-medium text-muted-foreground">Enrollments</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-3xl font-bold">{stats.totalEnrollments}</div>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-sm font-medium text-muted-foreground">Lectures</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-3xl font-bold">{stats.totalLectures}</div>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-sm font-medium text-muted-foreground">Attendance Records</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-3xl font-bold">{stats.totalAttendanceRecords}</div>
-                </CardContent>
-              </Card>
+              {dataCards.map((card, i) => {
+                const Icon = card.icon;
+                return (
+                  <div key={i} className="glass-card-hover rounded-xl p-5">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Icon className="w-4 h-4 text-slate-400" />
+                      <span className="text-xs text-slate-400 font-medium">{card.label}</span>
+                    </div>
+                    <p className="text-2xl font-bold text-white">{card.value.toLocaleString()}</p>
+                  </div>
+                );
+              })}
             </div>
 
-            <Card>
-              <CardHeader>
-                <CardTitle>System Status</CardTitle>
-                <CardDescription>Current system health and information</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="bg-green-50 dark:bg-green-950 border border-green-200 dark:border-green-800 rounded-lg p-4">
-                  <p className="text-sm text-green-900 dark:text-green-100">
-                    <strong>Status:</strong> All systems operational
-                  </p>
-                </div>
-
-                <div className="space-y-2 text-sm">
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Database Status:</span>
-                    <span className="font-semibold text-green-600">Connected</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Data Integrity:</span>
-                    <span className="font-semibold text-green-600">Verified</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Last Backup:</span>
-                    <span className="font-semibold">{new Date().toLocaleDateString()}</span>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+            <div className="glass-card rounded-xl p-5">
+              <div className="flex items-center gap-2 mb-3">
+                <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                <span className="text-sm font-medium text-emerald-400">All Systems Operational</span>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs text-slate-400">
+                <div>Database: <span className="text-emerald-400 font-medium">Connected</span></div>
+                <div>Data Integrity: <span className="text-emerald-400 font-medium">Verified</span></div>
+                <div>Uptime: <span className="text-white font-medium">99.9%</span></div>
+                <div>Last Sync: <span className="text-white font-medium">{new Date().toLocaleDateString()}</span></div>
+              </div>
+            </div>
           </TabsContent>
 
-          {/* Database Stats Tab */}
-          <TabsContent value="database" className="space-y-6">
-            <Card>
-              <CardHeader>
-                <CardTitle>Database Statistics</CardTitle>
-                <CardDescription>Detailed breakdown of all database entities</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
-                  <div>
-                    <p className="text-sm text-muted-foreground">Users</p>
-                    <p className="text-2xl font-bold">{stats.totalUsers}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-muted-foreground">Students</p>
-                    <p className="text-2xl font-bold">{stats.totalStudents}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-muted-foreground">Teachers</p>
-                    <p className="text-2xl font-bold">{stats.totalTeachers}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-muted-foreground">Subjects</p>
-                    <p className="text-2xl font-bold">{stats.totalSubjects}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-muted-foreground">Enrollments</p>
-                    <p className="text-2xl font-bold">{stats.totalEnrollments}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-muted-foreground">Lectures</p>
-                    <p className="text-2xl font-bold">{stats.totalLectures}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-muted-foreground">Attendance Records</p>
-                    <p className="text-2xl font-bold">{stats.totalAttendanceRecords}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-muted-foreground">Data Density</p>
-                    <p className="text-2xl font-bold">
-                      {((stats.totalAttendanceRecords / (stats.totalEnrollments * stats.totalLectures)) * 100).toFixed(0)}%
-                    </p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Alert>
-              <AlertCircle className="h-4 w-4" />
-              <AlertDescription>
-                The system contains {stats.totalStudents} students across {stats.totalSubjects} subjects with{' '}
-                {stats.totalAttendanceRecords} attendance records representing a realistic institutional dataset.
-              </AlertDescription>
-            </Alert>
-          </TabsContent>
-
-          {/* Users Tab */}
-          <TabsContent value="users" className="space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Sample Students (First 10)</CardTitle>
-                  <CardDescription>Active students in the system</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-3">
-                    {students.map((student, idx) => {
-                      const user = db.users.get(student.userId);
-                      return (
-                        <div key={idx} className="border-b pb-3 last:border-b-0">
-                          <p className="font-semibold text-sm">{user?.name}</p>
-                          <p className="text-xs text-muted-foreground">{user?.email}</p>
-                          <p className="text-xs text-muted-foreground">
-                            {student.branch} - Year {student.year} Div {student.division}
-                          </p>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle>Teachers</CardTitle>
-                  <CardDescription>All faculty members</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-3">
-                    {teachers.map((teacher, idx) => {
-                      const user = db.users.get(teacher.userId);
-                      return (
-                        <div key={idx} className="border-b pb-3 last:border-b-0">
-                          <p className="font-semibold text-sm">{user?.name}</p>
-                          <p className="text-xs text-muted-foreground">{user?.email}</p>
-                          <p className="text-xs text-muted-foreground">{teacher.subjects.length} subjects assigned</p>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </CardContent>
-              </Card>
+          <TabsContent value="trends" className="space-y-6">
+            <div className="glass-card rounded-xl p-6">
+              <h3 className="text-sm font-semibold text-white flex items-center gap-2 mb-4">
+                <TrendingUp className="w-4 h-4 text-blue-400" /> Monthly Attendance Trend
+              </h3>
+              <ResponsiveContainer width="100%" height={300}>
+                <LineChart data={monthlyTrend}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
+                  <XAxis dataKey="month" stroke="#64748b" tick={{ fontSize: 11 }}>
+                    <Label value="Month" position="insideBottom" offset={-5} style={{ fill: '#64748b', fontSize: 11 }} />
+                  </XAxis>
+                  <YAxis stroke="#64748b" domain={[0, 100]} tick={{ fontSize: 11 }}>
+                    <Label value="Attendance %" angle={-90} position="insideLeft" style={{ fill: '#64748b', fontSize: 11 }} />
+                  </YAxis>
+                  <Tooltip content={<ChartTooltip />} />
+                  <Legend wrapperStyle={{ fontSize: 11 }} />
+                  <Line type="monotone" dataKey="percentage" stroke="#60a5fa" strokeWidth={2} name="Attendance %" dot={{ fill: '#60a5fa', r: 4 }} activeDot={{ r: 6 }} />
+                </LineChart>
+              </ResponsiveContainer>
             </div>
 
-            <Card>
-              <CardHeader>
-                <CardTitle>Sample Subjects (First 10)</CardTitle>
-                <CardDescription>Academic subjects in the system</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {subjects.map((subject, idx) => {
-                    const teacher = db.users.get(db.teachers.get(subject.teacherId)?.userId || '');
-                    return (
-                      <div key={idx} className="border border-border rounded-lg p-4">
-                        <p className="font-semibold">{subject.name}</p>
-                        <p className="text-xs text-muted-foreground">{subject.code}</p>
-                        <p className="text-xs text-muted-foreground mt-1">Year {subject.year} - {subject.branch}</p>
-                        <p className="text-xs text-primary mt-2">Taught by: {teacher?.name}</p>
-                      </div>
-                    );
-                  })}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {monthlyTrend.slice(-3).map((m, i) => (
+                <div key={i} className="glass-card-hover rounded-xl p-5">
+                  <p className="text-xs text-slate-400 mb-1">{m.month}</p>
+                  <p className={`text-3xl font-bold ${m.percentage >= 75 ? 'text-emerald-400' : 'text-red-400'}`}>{m.percentage}%</p>
                 </div>
-              </CardContent>
-            </Card>
+              ))}
+            </div>
+          </TabsContent>
+
+          <TabsContent value="data" className="space-y-6">
+            <div className="glass-card rounded-xl p-6">
+              <h3 className="text-sm font-semibold text-white flex items-center gap-2 mb-4">
+                <Database className="w-4 h-4 text-amber-400" /> Database Statistics
+              </h3>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+                {[
+                  { l: 'Users', v: stats.totalUsers },
+                  { l: 'Students', v: stats.totalStudents },
+                  { l: 'Teachers', v: stats.totalTeachers },
+                  { l: 'Subjects', v: stats.totalSubjects },
+                  { l: 'Enrollments', v: stats.totalEnrollments },
+                  { l: 'Lectures', v: stats.totalLectures },
+                  { l: 'Attendance', v: stats.totalAttendance },
+                  { l: 'Data Density', v: `${((stats.totalAttendance / Math.max(1, stats.totalEnrollments * (stats.totalLectures / Math.max(1, stats.totalSubjects)))) * 100).toFixed(0)}%` },
+                ].map((item, i) => (
+                  <div key={i}>
+                    <p className="text-xs text-slate-500">{item.l}</p>
+                    <p className="text-xl font-bold text-white">{typeof item.v === 'number' ? item.v.toLocaleString() : item.v}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="glass-card rounded-xl p-4 flex items-start gap-3">
+              <AlertCircle className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
+              <p className="text-xs text-slate-400">
+                System contains {stats.totalStudents} students across {stats.totalSubjects} subject sections with {stats.totalAttendance.toLocaleString()} attendance records.
+              </p>
+            </div>
           </TabsContent>
         </Tabs>
       </main>

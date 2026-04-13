@@ -1,21 +1,27 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import { TrendingUp, TrendingDown, AlertTriangle, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Skeleton } from '@/components/ui/skeleton';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Label, Cell, ReferenceLine } from 'recharts';
+import { TrendingUp, TrendingDown, AlertTriangle, CheckCircle2, AlertCircle, BookOpen, Flame, Target, Users, Zap } from 'lucide-react';
+import { toast } from 'sonner';
 import StudentNav from '@/components/student-nav';
+import AttendanceHeatmap from '@/components/attendance-heatmap';
+import StreakBadge from '@/components/streak-badge';
+import WeeklyDigest from '@/components/weekly-digest';
+import NotificationsPanel from '@/components/notifications-panel';
+import GoalSetter from '@/components/goal-setter';
 
 interface SubjectAnalytics {
   subjectId: string;
   subjectName: string;
   subjectCode: string;
+  teacherName: string;
   stats: {
     totalLectures: number;
     totalPresent: number;
@@ -23,118 +29,129 @@ interface SubjectAnalytics {
     percentage: number;
     status: 'safe' | 'warning' | 'at-risk';
     statusLabel: string;
-    statusColor: string;
   };
-  classesNeeded: {
-    classesNeeded: number;
-    message: string;
-    currentPercentage: number;
-    targetPercentage: number;
-  };
+  classesNeeded: { classesNeeded: number; message: string };
   trend: {
     estimatedPercentage: number;
     trend: 'improving' | 'declining' | 'stable';
     trendMessage: string;
-    riskStatus: 'safe' | 'warning' | 'at-risk';
   };
-  lastLectureDate: string | null;
+  classAverage?: number;
   lectureCount: number;
+}
+
+// Circular progress ring component
+function CircularProgress({ percentage, size = 80, strokeWidth = 6, status }: { percentage: number; size?: number; strokeWidth?: number; status: string }) {
+  const radius = (size - strokeWidth) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const offset = circumference - (percentage / 100) * circumference;
+  const color = status === 'safe' ? '#22c55e' : status === 'warning' ? '#eab308' : '#ef4444';
+
+  return (
+    <div className="relative" style={{ width: size, height: size }}>
+      <svg width={size} height={size} className="-rotate-90">
+        <circle cx={size / 2} cy={size / 2} r={radius} fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth={strokeWidth} />
+        <circle cx={size / 2} cy={size / 2} r={radius} fill="none" stroke={color} strokeWidth={strokeWidth} strokeDasharray={circumference} strokeDashoffset={offset} strokeLinecap="round" className="transition-all duration-1000 ease-out" />
+      </svg>
+      <div className="absolute inset-0 flex items-center justify-center">
+        <span className="text-sm font-bold text-white">{percentage.toFixed(0)}%</span>
+      </div>
+    </div>
+  );
 }
 
 export default function StudentDashboard() {
   const router = useRouter();
   const { user, isAuthenticated, logout } = useAuth();
   const [analytics, setAnalytics] = useState<SubjectAnalytics[]>([]);
+  const [attendanceHistory, setAttendanceHistory] = useState<Record<string, any[]>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
-  const [selectedSubject, setSelectedSubject] = useState<SubjectAnalytics | null>(null);
-  const [simulateValue, setSimulateValue] = useState(3);
-  const [simulationResult, setSimulationResult] = useState<any>(null);
+  const [studentId, setStudentId] = useState('');
 
   useEffect(() => {
-    if (!isAuthenticated) {
-      router.push('/');
-      return;
-    }
-
+    if (!isAuthenticated) { router.push('/'); return; }
     const fetchAnalytics = async () => {
       try {
         const roleData = JSON.parse(localStorage.getItem('mitaoe_roleData') || '{}');
+        setStudentId(roleData.id || '');
         const response = await fetch(`/api/student/analytics?studentId=${roleData.id}`);
-
         if (!response.ok) throw new Error('Failed to fetch analytics');
-
         const data = await response.json();
         setAnalytics(data.analytics);
-        if (data.analytics.length > 0) {
-          setSelectedSubject(data.analytics[0]);
-        }
+        setAttendanceHistory(data.attendanceHistory || {});
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Error loading analytics');
+        toast.error('Failed to load analytics');
       } finally {
         setIsLoading(false);
       }
     };
-
     fetchAnalytics();
   }, [isAuthenticated, router]);
 
-  const handleSimulation = async () => {
-    if (!selectedSubject) return;
-
-    try {
-      const roleData = JSON.parse(localStorage.getItem('mitaoe_roleData') || '{}');
-      const response = await fetch('/api/student/simulate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          studentId: roleData.id,
-          subjectId: selectedSubject.subjectId,
-          classesToMiss: simulateValue,
-        }),
+  const currentStreak = useMemo(() => {
+    const dateMap = new Map<string, { total: number; present: number }>();
+    Object.values(attendanceHistory).forEach((records) => {
+      records.forEach((r: any) => {
+        const dateKey = new Date(r.date).toISOString().split('T')[0];
+        if (!dateMap.has(dateKey)) dateMap.set(dateKey, { total: 0, present: 0 });
+        const e = dateMap.get(dateKey)!;
+        e.total++;
+        if (r.status === 'present') e.present++;
       });
-
-      if (!response.ok) throw new Error('Simulation failed');
-      const result = await response.json();
-      setSimulationResult(result);
-    } catch (err) {
-      console.error('[v0] Simulation error:', err);
+    });
+    const sorted = Array.from(dateMap.entries()).filter(([_, d]) => d.total > 0).sort(([a], [b]) => a.localeCompare(b));
+    let streak = 0;
+    for (let i = sorted.length - 1; i >= 0; i--) {
+      if (sorted[i][1].present === sorted[i][1].total) streak++;
+      else break;
     }
-  };
+    return streak;
+  }, [attendanceHistory]);
 
-  const getStatusIcon = (status: string) => {
-    switch (status) {
-      case 'safe':
-        return <CheckCircle2 className="w-5 h-5 text-green-500" />;
-      case 'warning':
-        return <AlertCircle className="w-5 h-5 text-yellow-500" />;
-      case 'at-risk':
-        return <AlertTriangle className="w-5 h-5 text-red-500" />;
-      default:
-        return null;
-    }
-  };
+  const atRiskSubjects = analytics.filter(s => s.stats.status === 'at-risk');
+  const avgAttendance = analytics.length > 0 ? Math.round(analytics.reduce((sum, s) => sum + s.stats.percentage, 0) / analytics.length) : 0;
+  const totalLectures = analytics.reduce((sum, s) => sum + s.lectureCount, 0);
 
-  const getTrendIcon = (trend: string) => {
-    return trend === 'improving' ? (
-      <TrendingUp className="w-4 h-4 text-green-500" />
-    ) : trend === 'declining' ? (
-      <TrendingDown className="w-4 h-4 text-red-500" />
-    ) : null;
-  };
-
-  // Prepare chart data
-  const chartData = analytics.map((s) => ({
+  // Chart data: student vs class average (using subject CODE abbreviations)
+  const comparativeData = analytics.map(s => ({
     name: s.subjectCode,
-    attendance: Math.round(s.stats.percentage),
-    target: 75,
+    fullName: s.subjectName,
+    yours: Math.round(s.stats.percentage),
+    classAvg: Math.round(s.classAverage || 0),
   }));
 
-  const atRiskCount = analytics.filter((s) => s.stats.status === 'at-risk').length;
-  const safeCount = analytics.filter((s) => s.stats.status === 'safe').length;
-  const avgAttendance = Math.round(
-    analytics.reduce((sum, s) => sum + s.stats.percentage, 0) / analytics.length
-  );
+  const CustomTooltip = ({ active, payload, label }: any) => {
+    if (active && payload?.length) {
+      const item = comparativeData.find(d => d.name === label);
+      return (
+        <div className="glass-card rounded-lg px-3 py-2 text-xs">
+          <p className="font-semibold text-white mb-1">{item?.fullName || label}</p>
+          {payload.map((p: any, i: number) => (
+            <p key={i} style={{ color: p.color }}>{p.name}: {p.value}%</p>
+          ))}
+        </div>
+      );
+    }
+    return null;
+  };
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-background">
+        <StudentNav userName={user?.name || 'Student'} onLogout={logout} />
+        <main className="p-4 md:p-8 max-w-7xl mx-auto space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 stagger-children">
+            {[...Array(4)].map((_, i) => (
+              <div key={i} className="glass-card rounded-xl p-6"><Skeleton className="h-8 w-16 bg-white/5" /><Skeleton className="h-4 w-24 mt-2 bg-white/5" /></div>
+            ))}
+          </div>
+          <div className="glass-card rounded-xl p-6"><Skeleton className="h-[300px] w-full bg-white/5" /></div>
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background">
@@ -142,265 +159,214 @@ export default function StudentDashboard() {
 
       <main className="p-4 md:p-8 max-w-7xl mx-auto">
         {/* Header */}
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold mb-2">Academic Dashboard</h1>
-          <p className="text-muted-foreground">Track your attendance and academic performance</p>
+        <div className="mb-6 flex items-center justify-between flex-wrap gap-4">
+          <div>
+            <h1 className="text-2xl font-bold text-white flex items-center gap-2">
+              <Zap className="w-6 h-6 text-blue-400" />
+              Academic Dashboard
+            </h1>
+            <p className="text-sm text-slate-400 mt-0.5">Track your attendance and performance</p>
+          </div>
+          {Object.keys(attendanceHistory).length > 0 && (
+            <StreakBadge attendanceHistory={attendanceHistory} />
+          )}
         </div>
 
         {error && (
-          <Alert variant="destructive" className="mb-6">
+          <Alert variant="destructive" className="mb-6 bg-red-500/10 border-red-500/30">
             <AlertCircle className="h-4 w-4" />
             <AlertDescription>{error}</AlertDescription>
           </Alert>
         )}
 
-        {isLoading ? (
-          <div className="grid gap-4">
-            {[...Array(3)].map((_, i) => (
-              <Card key={i} className="animate-pulse">
-                <CardHeader>
-                  <div className="h-6 bg-muted rounded w-1/3"></div>
-                </CardHeader>
-                <CardContent>
-                  <div className="h-20 bg-muted rounded"></div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        ) : (
-          <div className="space-y-6">
-            {/* Summary Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-sm font-medium text-muted-foreground">Average Attendance</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-3xl font-bold">{avgAttendance}%</div>
-                  <p className="text-xs text-muted-foreground mt-1">Across all subjects</p>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-sm font-medium text-muted-foreground">Safe Status</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-3xl font-bold text-green-600">{safeCount}</div>
-                  <p className="text-xs text-muted-foreground mt-1">of {analytics.length} subjects</p>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-sm font-medium text-muted-foreground">At Risk</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-3xl font-bold text-red-600">{atRiskCount}</div>
-                  <p className="text-xs text-muted-foreground mt-1">Below 75%</p>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-sm font-medium text-muted-foreground">Total Lectures</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-3xl font-bold">
-                    {analytics.reduce((sum, s) => sum + s.lectureCount, 0)}
-                  </div>
-                  <p className="text-xs text-muted-foreground mt-1">Across all subjects</p>
-                </CardContent>
-              </Card>
+        {/* At-risk banner */}
+        {atRiskSubjects.length > 0 && (
+          <div className="mb-6 p-4 rounded-xl bg-red-500/10 border border-red-500/20 flex items-start gap-3 animate-slide-up pulse-danger">
+            <AlertTriangle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
+            <div>
+              <p className="text-sm font-semibold text-red-300">Attendance Alert</p>
+              <p className="text-xs text-red-300/80 mt-0.5">
+                Below 75% in: {atRiskSubjects.map(s => s.subjectName).join(', ')}
+              </p>
             </div>
-
-            {/* Attendance Overview Chart */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Subject-wise Attendance Overview</CardTitle>
-                <CardDescription>Your attendance percentage in each subject</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <ResponsiveContainer width="100%" height={300}>
-                  <BarChart data={chartData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-                    <XAxis dataKey="name" stroke="var(--muted-foreground)" />
-                    <YAxis stroke="var(--muted-foreground)" />
-                    <Tooltip contentStyle={{ backgroundColor: 'var(--card)', border: '1px solid var(--border)' }} />
-                    <Legend />
-                    <Bar dataKey="attendance" fill="var(--primary)" name="Your Attendance" />
-                    <Bar dataKey="target" fill="var(--muted)" name="Target (75%)" />
-                  </BarChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
-
-            {/* Detailed Analytics */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Subject-wise Details</CardTitle>
-                <CardDescription>Detailed analytics and intelligence for each subject</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <Tabs defaultValue="0" className="space-y-4">
-                  <TabsList className="grid w-full gap-1" style={{ gridTemplateColumns: `repeat(auto-fit, minmax(100px, 1fr))` }}>
-                    {analytics.map((subject, idx) => (
-                      <TabsTrigger key={idx} value={String(idx)} className="text-xs">
-                        {subject.subjectCode}
-                      </TabsTrigger>
-                    ))}
-                  </TabsList>
-
-                  {analytics.map((subject, idx) => (
-                    <TabsContent key={idx} value={String(idx)} className="space-y-4">
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {/* Attendance Stats */}
-                        <Card className="border-border">
-                          <CardHeader>
-                            <div className="flex items-center justify-between">
-                              <CardTitle className="text-lg">{subject.subjectName}</CardTitle>
-                              {getStatusIcon(subject.stats.status)}
-                            </div>
-                            <CardDescription>{subject.subjectCode}</CardDescription>
-                          </CardHeader>
-                          <CardContent className="space-y-4">
-                            <div className="space-y-2">
-                              <div className="flex items-center justify-between">
-                                <span className="text-sm font-medium">Attendance</span>
-                                <span className="text-2xl font-bold">{subject.stats.percentage.toFixed(1)}%</span>
-                              </div>
-                              <div className="w-full bg-muted rounded-full h-2">
-                                <div
-                                  className={`h-full rounded-full transition-all ${
-                                    subject.stats.status === 'safe'
-                                      ? 'bg-green-500'
-                                      : subject.stats.status === 'warning'
-                                      ? 'bg-yellow-500'
-                                      : 'bg-red-500'
-                                  }`}
-                                  style={{ width: `${Math.min(100, subject.stats.percentage)}%` }}
-                                ></div>
-                              </div>
-                            </div>
-
-                            <div className="grid grid-cols-2 gap-2 text-sm">
-                              <div>
-                                <p className="text-muted-foreground">Present</p>
-                                <p className="font-semibold">{subject.stats.totalPresent}</p>
-                              </div>
-                              <div>
-                                <p className="text-muted-foreground">Absent</p>
-                                <p className="font-semibold">{subject.stats.totalAbsent}</p>
-                              </div>
-                            </div>
-
-                            <div className="pt-2 border-t border-border">
-                              <p className="text-sm">
-                                <Badge className={
-                                  subject.stats.status === 'safe'
-                                    ? 'bg-green-600'
-                                    : subject.stats.status === 'warning'
-                                    ? 'bg-yellow-600'
-                                    : 'bg-red-600'
-                                }>
-                                  {subject.stats.statusLabel}
-                                </Badge>
-                              </p>
-                            </div>
-                          </CardContent>
-                        </Card>
-
-                        {/* Classes Needed & Trend */}
-                        <div className="space-y-4">
-                          {/* Classes Needed */}
-                          <Card className="border-border">
-                            <CardHeader>
-                              <CardTitle className="text-base">Classes Needed to Reach 75%</CardTitle>
-                            </CardHeader>
-                            <CardContent className="space-y-3">
-                              {subject.classesNeeded.classesNeeded === 0 ? (
-                                <div className="text-center py-2">
-                                  <CheckCircle2 className="w-8 h-8 text-green-500 mx-auto mb-2" />
-                                  <p className="text-sm font-medium">You have reached your target!</p>
-                                </div>
-                              ) : (
-                                <div>
-                                  <p className="text-3xl font-bold text-primary">
-                                    {subject.classesNeeded.classesNeeded}
-                                  </p>
-                                  <p className="text-sm text-muted-foreground mt-1">more classes required</p>
-                                </div>
-                              )}
-                            </CardContent>
-                          </Card>
-
-                          {/* Trend Analysis */}
-                          <Card className="border-border">
-                            <CardHeader>
-                              <CardTitle className="text-base">Trend Analysis</CardTitle>
-                            </CardHeader>
-                            <CardContent className="space-y-3">
-                              <div className="flex items-center gap-2">
-                                {getTrendIcon(subject.trend.trend)}
-                                <span className="text-sm font-medium capitalize">{subject.trend.trend}</span>
-                              </div>
-                              <p className="text-sm text-muted-foreground">{subject.trend.trendMessage}</p>
-                              <p className="text-xs text-muted-foreground mt-2">
-                                Estimated future: {subject.trend.estimatedPercentage}%
-                              </p>
-                            </CardContent>
-                          </Card>
-                        </div>
-                      </div>
-
-                      {/* Simulation Tool */}
-                      <Card className="border-border bg-secondary/30">
-                        <CardHeader>
-                          <CardTitle className="text-base">What-If Simulator</CardTitle>
-                          <CardDescription>See how missing classes affects your attendance</CardDescription>
-                        </CardHeader>
-                        <CardContent className="space-y-4">
-                          <div className="space-y-2">
-                            <label className="text-sm font-medium">Classes to miss: {simulateValue}</label>
-                            <input
-                              type="range"
-                              min="0"
-                              max="10"
-                              value={simulateValue}
-                              onChange={(e) => setSimulateValue(Number(e.target.value))}
-                              className="w-full"
-                            />
-                          </div>
-                          <Button onClick={handleSimulation} className="w-full">
-                            Simulate
-                          </Button>
-
-                          {simulationResult && (
-                            <div className="bg-card border border-border rounded-lg p-4 space-y-2 text-sm">
-                              <p>
-                                <span className="font-medium">Current:</span> {simulationResult.currentPercentage.toFixed(1)}%
-                              </p>
-                              <p>
-                                <span className="font-medium">After missing {simulationResult.ifMissNext}:</span>{' '}
-                                {simulationResult.predictedPercentage.toFixed(1)}%
-                              </p>
-                              <p>
-                                <span className="font-medium">Will reach 75%:</span>{' '}
-                                <Badge className={simulationResult.willReachTarget ? 'bg-green-600' : 'bg-red-600'}>
-                                  {simulationResult.willReachTarget ? 'Yes' : 'No'}
-                                </Badge>
-                              </p>
-                            </div>
-                          )}
-                        </CardContent>
-                      </Card>
-                    </TabsContent>
-                  ))}
-                </Tabs>
-              </CardContent>
-            </Card>
           </div>
         )}
+
+        <NotificationsPanel analytics={analytics} currentStreak={currentStreak} />
+
+        {/* Summary Cards */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6 stagger-children">
+          <div className="glass-card-hover rounded-xl p-5">
+            <div className="flex items-center gap-2 mb-2">
+              <Target className="w-4 h-4 text-blue-400" />
+              <span className="text-xs text-slate-400 font-medium">Average</span>
+            </div>
+            <p className="text-2xl font-bold text-white">{avgAttendance}%</p>
+            <div className="mt-2 h-1.5 rounded-full bg-white/5 overflow-hidden">
+              <div className="progress-gradient h-full" style={{ width: `${avgAttendance}%` }} />
+            </div>
+          </div>
+
+          <div className="glass-card-hover rounded-xl p-5">
+            <div className="flex items-center gap-2 mb-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+              <span className="text-xs text-slate-400 font-medium">Safe</span>
+            </div>
+            <p className="text-2xl font-bold text-emerald-400">{analytics.filter(s => s.stats.status === 'safe').length}</p>
+            <p className="text-xs text-slate-500 mt-1">of {analytics.length} subjects</p>
+          </div>
+
+          <div className="glass-card-hover rounded-xl p-5">
+            <div className="flex items-center gap-2 mb-2">
+              <AlertTriangle className="w-4 h-4 text-red-400" />
+              <span className="text-xs text-slate-400 font-medium">At Risk</span>
+            </div>
+            <p className="text-2xl font-bold text-red-400">{atRiskSubjects.length}</p>
+            <p className="text-xs text-slate-500 mt-1">below 75%</p>
+          </div>
+
+          <div className="glass-card-hover rounded-xl p-5">
+            <div className="flex items-center gap-2 mb-2">
+              <BookOpen className="w-4 h-4 text-violet-400" />
+              <span className="text-xs text-slate-400 font-medium">Lectures</span>
+            </div>
+            <p className="text-2xl font-bold text-white">{totalLectures}</p>
+            <p className="text-xs text-slate-500 mt-1">across all subjects</p>
+          </div>
+        </div>
+
+        {/* Subject Cards with Circular Progress */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
+          {analytics.map((subject, idx) => (
+            <div key={idx} className="glass-card-hover rounded-xl p-5 animate-slide-up" style={{ animationDelay: `${idx * 0.05}s` }}>
+              <div className="flex items-start justify-between">
+                <div className="flex-1 min-w-0">
+                  <h3 className="text-sm font-semibold text-white truncate">{subject.subjectName}</h3>
+                  <p className="text-xs text-slate-500 mt-0.5">{subject.subjectCode} · {subject.teacherName}</p>
+                  <div className="flex items-center gap-2 mt-3">
+                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
+                      subject.stats.status === 'safe' ? 'status-safe' :
+                      subject.stats.status === 'warning' ? 'status-warning' : 'status-danger pulse-danger'
+                    }`}>
+                      {subject.stats.statusLabel}
+                    </span>
+                    <span className="flex items-center gap-0.5 text-[10px] text-slate-400">
+                      {subject.trend.trend === 'improving' ? <TrendingUp className="w-3 h-3 text-emerald-400" /> :
+                       subject.trend.trend === 'declining' ? <TrendingDown className="w-3 h-3 text-red-400" /> : null}
+                      {subject.trend.trend}
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-slate-500 mt-2">
+                    {subject.stats.totalPresent}/{subject.stats.totalLectures} classes · Class avg: {subject.classAverage?.toFixed(0)}%
+                  </p>
+                </div>
+                <CircularProgress percentage={subject.stats.percentage} status={subject.stats.status} />
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Heatmap + Sidebar */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+          <div className="lg:col-span-2 glass-card rounded-xl p-6">
+            <h2 className="text-sm font-semibold text-white flex items-center gap-2 mb-1">
+              <Flame className="w-4 h-4 text-orange-400" />
+              Attendance Heatmap
+            </h2>
+            <p className="text-xs text-slate-500 mb-4">12-week rolling calendar · hover for details</p>
+            <AttendanceHeatmap attendanceHistory={attendanceHistory} />
+          </div>
+
+          <div className="space-y-4">
+            <WeeklyDigest attendanceHistory={attendanceHistory} />
+            <GoalSetter studentId={studentId} analytics={analytics} />
+          </div>
+        </div>
+
+        {/* Comparative Bar Chart */}
+        <div className="glass-card rounded-xl p-6 mb-6">
+          <h2 className="text-sm font-semibold text-white flex items-center gap-2 mb-1">
+            <Users className="w-4 h-4 text-blue-400" />
+            Your Performance vs Class Average
+          </h2>
+          <p className="text-xs text-slate-500 mb-4">Subject-wise comparison</p>
+          <ResponsiveContainer width="100%" height={300}>
+            <BarChart data={comparativeData} barCategoryGap="20%">
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
+              <XAxis dataKey="name" stroke="#64748b" tick={{ fontSize: 11 }}>
+                <Label value="Subject" position="insideBottom" offset={-5} style={{ fill: '#64748b', fontSize: 11 }} />
+              </XAxis>
+              <YAxis stroke="#64748b" domain={[0, 100]} tick={{ fontSize: 11 }}>
+                <Label value="Attendance %" angle={-90} position="insideLeft" style={{ fill: '#64748b', fontSize: 11 }} />
+              </YAxis>
+              <Tooltip content={<CustomTooltip />} />
+              <Legend wrapperStyle={{ fontSize: 11 }} />
+              <ReferenceLine y={75} stroke="#ef4444" strokeDasharray="4 4" label={{ value: '75%', fill: '#ef4444', fontSize: 10 }} />
+              <Bar dataKey="yours" name="Your Attendance" radius={[4, 4, 0, 0]}>
+                {comparativeData.map((entry, i) => (
+                  <Cell key={i} fill={entry.yours >= 85 ? '#22c55e' : entry.yours >= 75 ? '#eab308' : '#ef4444'} />
+                ))}
+              </Bar>
+              <Bar dataKey="classAvg" name="Class Average" fill="rgba(148,163,184,0.4)" radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+
+        {/* Detailed Subject Tabs */}
+        <div className="glass-card rounded-xl p-6">
+          <h2 className="text-sm font-semibold text-white mb-4">Subject Details & Simulator</h2>
+          <Tabs defaultValue="0" className="space-y-4">
+            <TabsList className="bg-white/5 border border-white/10 p-1 rounded-lg grid gap-1" style={{ gridTemplateColumns: `repeat(auto-fit, minmax(80px, 1fr))` }}>
+              {analytics.map((s, idx) => (
+                <TabsTrigger key={idx} value={String(idx)} className="text-[10px] data-[state=active]:bg-white/10 data-[state=active]:text-white rounded-md">
+                  {s.subjectCode}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+
+            {analytics.map((subject, idx) => (
+              <TabsContent key={idx} value={String(idx)}>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="glass-card rounded-xl p-5">
+                    <p className="text-xs text-slate-400 mb-1">Attendance</p>
+                    <p className="text-3xl font-bold text-white">{subject.stats.percentage.toFixed(1)}%</p>
+                    <div className="mt-2 h-1.5 rounded-full bg-white/5 overflow-hidden">
+                      <div className="progress-gradient h-full" style={{ width: `${subject.stats.percentage}%` }} />
+                    </div>
+                    <div className="flex gap-4 mt-3 text-xs">
+                      <span className="text-emerald-400">{subject.stats.totalPresent} present</span>
+                      <span className="text-red-400">{subject.stats.totalAbsent} absent</span>
+                    </div>
+                  </div>
+
+                  <div className="glass-card rounded-xl p-5">
+                    <p className="text-xs text-slate-400 mb-1">Classes to 75%</p>
+                    {subject.classesNeeded.classesNeeded === 0 ? (
+                      <div className="flex items-center gap-2 mt-2">
+                        <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+                        <span className="text-sm text-emerald-400 font-medium">Target met!</span>
+                      </div>
+                    ) : (
+                      <p className="text-3xl font-bold text-orange-400">{subject.classesNeeded.classesNeeded}</p>
+                    )}
+                    <p className="text-xs text-slate-500 mt-2">{subject.classesNeeded.message}</p>
+                  </div>
+
+                  <div className="glass-card rounded-xl p-5">
+                    <p className="text-xs text-slate-400 mb-1">Trend</p>
+                    <div className="flex items-center gap-2 mt-1">
+                      {subject.trend.trend === 'improving' ? <TrendingUp className="w-5 h-5 text-emerald-400" /> :
+                       subject.trend.trend === 'declining' ? <TrendingDown className="w-5 h-5 text-red-400" /> :
+                       <span className="text-slate-400">—</span>}
+                      <span className="text-sm font-medium text-white capitalize">{subject.trend.trend}</span>
+                    </div>
+                    <p className="text-xs text-slate-500 mt-2">{subject.trend.trendMessage}</p>
+                  </div>
+                </div>
+              </TabsContent>
+            ))}
+          </Tabs>
+        </div>
       </main>
     </div>
   );

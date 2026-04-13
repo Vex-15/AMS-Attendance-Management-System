@@ -1,9 +1,8 @@
 'use client';
 
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import { Button } from '@/components/ui/button';
-import { BarChart3, LogOut, Menu } from 'lucide-react';
+import { useRouter, usePathname } from 'next/navigation';
+import { GraduationCap, LogOut, Menu, X, Trophy, FileText, LayoutDashboard, BarChart3 } from 'lucide-react';
 import { useState } from 'react';
 
 interface StudentNavProps {
@@ -13,6 +12,7 @@ interface StudentNavProps {
 
 export default function StudentNav({ userName, onLogout }: StudentNavProps) {
   const router = useRouter();
+  const pathname = usePathname();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const handleLogout = () => {
@@ -20,67 +20,92 @@ export default function StudentNav({ userName, onLogout }: StudentNavProps) {
     router.push('/');
   };
 
+  const links = [
+    { href: '/dashboard/student', label: 'Dashboard', icon: LayoutDashboard },
+    { href: '/dashboard/leaderboard', label: 'Leaderboard', icon: Trophy },
+    { href: '/dashboard/student/report', label: 'Report', icon: FileText },
+  ];
+
   return (
-    <nav className="bg-sidebar text-sidebar-foreground border-b border-sidebar-border">
-      <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-gradient-to-br from-primary to-accent rounded-lg flex items-center justify-center text-white font-bold">
-            MA
+    <nav className="glass-nav sticky top-0 z-50">
+      <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
+        {/* Logo */}
+        <Link href="/dashboard/student" className="flex items-center gap-3 group">
+          <div className="w-9 h-9 bg-gradient-to-br from-blue-500 to-violet-600 rounded-lg flex items-center justify-center shadow-md shadow-blue-500/20 group-hover:scale-105 transition">
+            <GraduationCap className="w-5 h-5 text-white" />
           </div>
           <div>
-            <Link href="/dashboard/student" className="font-bold text-lg hover:opacity-80">
-              MITAOE
-            </Link>
-            <p className="text-xs text-sidebar-foreground/60">Student Portal</p>
+            <span className="font-bold text-white text-sm">MITAOE</span>
+            <p className="text-[10px] text-slate-400 -mt-0.5">Student Portal</p>
           </div>
+        </Link>
+
+        {/* Desktop Links */}
+        <div className="hidden md:flex items-center gap-1">
+          {links.map((link) => {
+            const Icon = link.icon;
+            const isActive = pathname === link.href;
+            return (
+              <Link
+                key={link.href}
+                href={link.href}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all
+                  ${isActive
+                    ? 'bg-white/10 text-white'
+                    : 'text-slate-400 hover:text-white hover:bg-white/5'
+                  }`}
+              >
+                <Icon className="w-3.5 h-3.5" />
+                {link.label}
+              </Link>
+            );
+          })}
         </div>
 
-        <div className="hidden md:flex items-center gap-6">
-          <Link href="/dashboard/student" className="text-sm hover:text-sidebar-primary transition">
-            Dashboard
-          </Link>
-        </div>
-
-        <div className="hidden md:flex items-center gap-4">
-          <div className="text-sm">
-            <p className="font-medium">{userName}</p>
-            <p className="text-xs text-sidebar-foreground/60">Student</p>
+        {/* User */}
+        <div className="hidden md:flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <div className="w-7 h-7 rounded-full bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center text-white text-[10px] font-bold">
+              {userName.charAt(0).toUpperCase()}
+            </div>
+            <span className="text-xs text-slate-300 font-medium">{userName}</span>
           </div>
-          <Button
-            variant="outline"
-            size="sm"
+          <button
             onClick={handleLogout}
-            className="text-xs"
+            className="flex items-center gap-1 text-xs text-slate-500 hover:text-red-400 transition px-2 py-1 rounded-lg hover:bg-white/5"
           >
-            <LogOut className="w-4 h-4 mr-1" />
-            Logout
-          </Button>
+            <LogOut className="w-3.5 h-3.5" />
+          </button>
         </div>
 
-        <button
-          className="md:hidden"
-          onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-        >
-          <Menu className="w-6 h-6" />
+        {/* Mobile toggle */}
+        <button className="md:hidden text-slate-400" onClick={() => setMobileMenuOpen(!mobileMenuOpen)}>
+          {mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
         </button>
       </div>
 
+      {/* Mobile menu */}
       {mobileMenuOpen && (
-        <div className="md:hidden bg-sidebar-accent/10 border-t border-sidebar-border p-4 space-y-4">
-          <Link href="/dashboard/student" className="block text-sm hover:text-sidebar-primary">
-            Dashboard
-          </Link>
-          <div className="border-t border-sidebar-border pt-4">
-            <p className="text-sm font-medium mb-3">{userName}</p>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleLogout}
-              className="w-full justify-center"
-            >
-              <LogOut className="w-4 h-4 mr-1" />
-              Logout
-            </Button>
+        <div className="md:hidden glass-card border-t border-white/5 p-4 space-y-2">
+          {links.map((link) => {
+            const Icon = link.icon;
+            return (
+              <Link
+                key={link.href}
+                href={link.href}
+                className="flex items-center gap-2 text-sm text-slate-300 hover:text-white py-2 px-3 rounded-lg hover:bg-white/5 transition"
+                onClick={() => setMobileMenuOpen(false)}
+              >
+                <Icon className="w-4 h-4" />
+                {link.label}
+              </Link>
+            );
+          })}
+          <div className="border-t border-white/5 pt-3 mt-3">
+            <button onClick={handleLogout} className="flex items-center gap-2 text-sm text-red-400 hover:text-red-300 py-2 px-3 rounded-lg hover:bg-white/5 transition w-full">
+              <LogOut className="w-4 h-4" />
+              Sign Out
+            </button>
           </div>
         </div>
       )}

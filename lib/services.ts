@@ -36,9 +36,30 @@ export interface SubjectAnalytics {
   subjectId: string;
   subjectName: string;
   subjectCode: string;
+  teacherName: string;
   stats: AttendanceStats;
   lastLectureDate: Date | null;
   lectureCount: number;
+}
+
+// ============= HELPER: Get teacher name for a subject =============
+export function getTeacherNameForSubject(subjectId: string): string {
+  const db = getDB();
+  const subject = db.subjects.get(subjectId);
+  if (!subject) return 'Unknown';
+  const teacher = db.teachers.get(subject.teacherId);
+  if (!teacher) return 'Unknown';
+  const user = db.users.get(teacher.userId);
+  return user?.name || 'Unknown';
+}
+
+// ============= HELPER: Get subject display name with division =============
+export function getSubjectDisplayName(subjectId: string): string {
+  const db = getDB();
+  const subject = db.subjects.get(subjectId);
+  if (!subject) return 'Unknown';
+  const yearLabels: Record<number, string> = { 1: 'FY', 2: 'SY', 3: 'TY', 4: 'BE' };
+  return `${subject.name} — ${yearLabels[subject.year] || 'Y' + subject.year} ${subject.division}`;
 }
 
 // ============= ATTENDANCE CALCULATIONS =============
@@ -49,12 +70,10 @@ export function getAttendanceStats(
 ): AttendanceStats {
   const db = getDB();
   
-  // Get all attendance records for this student
   let attendanceRecords = Array.from(db.attendance.values()).filter(
     (a) => a.studentId === studentId
   );
 
-  // Filter by subject if provided
   if (subjectId) {
     const lecturesInSubject = Array.from(db.lectures.values())
       .filter((l) => l.subjectId === subjectId)
@@ -120,13 +139,6 @@ export function calculateClassesNeeded(
     };
   }
 
-  // Solve: (present + x) / (total + x) >= targetPercentage
-  // present + x >= (targetPercentage / 100) * (total + x)
-  // present + x >= targetPercentage * total / 100 + targetPercentage * x / 100
-  // x - targetPercentage * x / 100 >= targetPercentage * total / 100 - present
-  // x * (1 - targetPercentage / 100) >= (targetPercentage / 100) * total - present
-  // x >= ((targetPercentage / 100) * total - present) / (1 - targetPercentage / 100)
-
   const classesNeeded = Math.ceil(
     ((targetPercentage / 100) * totalLectures - totalPresent) /
       (1 - targetPercentage / 100)
@@ -149,13 +161,11 @@ export function analyzeTrend(
 ): PredictionResult {
   const db = getDB();
 
-  // Get lectures for this subject, sorted by date
   const subjectLectures = Array.from(db.lectures.values())
     .filter((l) => l.subjectId === subjectId)
     .sort((a, b) => b.date.getTime() - a.date.getTime());
 
   if (subjectLectures.length < 10) {
-    // Not enough data, return current stats
     const stats = getAttendanceStats(studentId, subjectId);
     return {
       estimatedPercentage: stats.percentage,
@@ -165,7 +175,6 @@ export function analyzeTrend(
     };
   }
 
-  // Get attendance for recent lectures
   const recentLectures = subjectLectures.slice(0, lookbackPeriod);
   const previousLectures = subjectLectures.slice(lookbackPeriod, lookbackPeriod * 2);
 
@@ -207,7 +216,6 @@ export function analyzeTrend(
     trendMessage = `Stable at ${Math.round(recentRate * 100)}%`;
   }
 
-  // Estimate future attendance assuming trend continues
   const stats = getAttendanceStats(studentId, subjectId);
   let estimatedPercentage = stats.percentage;
 
@@ -264,7 +272,6 @@ export function simulateMissingClasses(
 export function getSubjectAnalytics(studentId: string): SubjectAnalytics[] {
   const db = getDB();
 
-  // Get all enrollments for this student
   const enrollments = Array.from(db.enrollments.values()).filter(
     (e) => e.studentId === studentId
   );
@@ -273,8 +280,8 @@ export function getSubjectAnalytics(studentId: string): SubjectAnalytics[] {
     .map((enrollment) => {
       const subject = db.subjects.get(enrollment.subjectId)!;
       const stats = getAttendanceStats(studentId, enrollment.subjectId);
+      const teacherName = getTeacherNameForSubject(enrollment.subjectId);
 
-      // Get last lecture date for this subject
       const subjectLectures = Array.from(db.lectures.values())
         .filter((l) => l.subjectId === enrollment.subjectId)
         .sort((a, b) => b.date.getTime() - a.date.getTime());
@@ -283,12 +290,13 @@ export function getSubjectAnalytics(studentId: string): SubjectAnalytics[] {
         subjectId: enrollment.subjectId,
         subjectName: subject.name,
         subjectCode: subject.code,
+        teacherName,
         stats,
         lastLectureDate: subjectLectures[0]?.date || null,
         lectureCount: subjectLectures.length,
       };
     })
-    .sort((a, b) => a.stats.percentage - b.stats.percentage); // Worst first
+    .sort((a, b) => a.stats.percentage - b.stats.percentage);
 }
 
 // ============= TEACHER ANALYTICS =============
@@ -296,45 +304,38 @@ export function getSubjectAnalytics(studentId: string): SubjectAnalytics[] {
 export function getClassAnalytics(subjectId: string) {
   const db = getDB();
 
-  // Get all attendance for this subject
   const lectures = Array.from(db.lectures.values())
     .filter((l) => l.subjectId === subjectId)
     .sort((a, b) => b.date.getTime() - a.date.getTime());
 
   const subject = db.subjects.get(subjectId)!;
 
-  // Get all enrollments for this subject
   const enrollments = Array.from(db.enrollments.values()).filter(
-    (e) => {
-      const student = db.students.get(e.studentId)!;
-      const subj = db.subjects.get(e.subjectId)!;
-      return subj.id === subjectId;
-    }
+    (e) => e.subjectId === subjectId
   );
 
-  // Calculate stats for each student
   const studentStats = enrollments.map((enrollment) => {
-    const student = db.users.get(db.students.get(enrollment.studentId)!.userId)!;
+    const student = db.students.get(enrollment.studentId)!;
+    const user = db.users.get(student.userId)!;
     const stats = getAttendanceStats(enrollment.studentId, subjectId);
 
     return {
       studentId: enrollment.studentId,
-      studentName: student.name,
+      studentName: user.name,
+      rollNumber: `${subject.code.substring(0, 2)}${String(enrollments.indexOf(enrollment) + 1).padStart(3, '0')}`,
+      division: student.division,
       stats,
     };
   });
 
-  // Calculate class average
   const classAverage =
     studentStats.length > 0
       ? studentStats.reduce((sum, s) => sum + s.stats.percentage, 0) /
         studentStats.length
       : 0;
 
-  // Get lowest performers
   const lowestPerformers = studentStats
-    .sort((a, b) => a.stats.percentage - b.stats.percentage)
-    .slice(0, 5);
+    .sort((a, b) => a.stats.percentage - b.stats.percentage);
 
   // Daily attendance summary for last 10 lectures
   const recentLectures = lectures.slice(0, 10).reverse();
@@ -348,16 +349,22 @@ export function getClassAnalytics(subjectId: string) {
       date: lecture.date,
       presentCount: attendanceForLecture.length,
       totalCount: enrollments.length,
-      percentage: Math.round(
+      percentage: enrollments.length > 0 ? Math.round(
         (attendanceForLecture.length / enrollments.length) * 100
-      ),
+      ) : 0,
     };
   });
+
+  // Year label
+  const yearLabels: Record<number, string> = { 1: 'FY', 2: 'SY', 3: 'TY', 4: 'BE' };
 
   return {
     subjectId,
     subjectName: subject.name,
     subjectCode: subject.code,
+    subjectDisplayName: `${subject.name} — ${yearLabels[subject.year] || 'Y' + subject.year} ${subject.division}`,
+    division: subject.division,
+    year: subject.year,
     totalStudents: enrollments.length,
     classAverage: Math.round(classAverage * 100) / 100,
     lowestPerformers,
@@ -382,7 +389,7 @@ export function searchStudents(query: string) {
         s.user.name.toLowerCase().includes(lowerQuery) ||
         s.user.email.toLowerCase().includes(lowerQuery)
     )
-    .slice(0, 20); // Limit to 20 results
+    .slice(0, 20);
 
   return students;
 }
