@@ -8,6 +8,7 @@ export async function GET(request: NextRequest) {
     const year = request.nextUrl.searchParams.get('year');
     const division = request.nextUrl.searchParams.get('division');
     const subjectId = request.nextUrl.searchParams.get('subjectId');
+    const teacherId = request.nextUrl.searchParams.get('teacherId');
 
     const db = getDB();
 
@@ -22,6 +23,20 @@ export async function GET(request: NextRequest) {
     }
     if (division) {
       students = students.filter((s) => s.division === division);
+    }
+    if (teacherId) {
+      const teacher = db.teachers.get(teacherId);
+      if (!teacher) {
+        return NextResponse.json({ error: 'Teacher not found' }, { status: 403 });
+      }
+
+      const teacherSubjectIds = new Set(teacher.subjects);
+      const accessibleStudentIds = new Set(
+        Array.from(db.enrollments.values())
+          .filter((enrollment) => teacherSubjectIds.has(enrollment.subjectId))
+          .map((enrollment) => enrollment.studentId),
+      );
+      students = students.filter((student) => accessibleStudentIds.has(student.id));
     }
 
     // Calculate stats for each student

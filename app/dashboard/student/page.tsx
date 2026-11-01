@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -68,6 +68,8 @@ export default function StudentDashboard() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
   const [studentId, setStudentId] = useState('');
+  const [selectedSubjectTab, setSelectedSubjectTab] = useState('0');
+  const subjectDetailsRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!isAuthenticated) { router.push('/'); return; }
@@ -238,7 +240,17 @@ export default function StudentDashboard() {
         {/* Subject Cards with Circular Progress */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
           {analytics.map((subject, idx) => (
-            <div key={idx} className="glass-card-hover rounded-xl p-5 animate-slide-up" style={{ animationDelay: `${idx * 0.05}s` }}>
+            <button
+              key={idx}
+              type="button"
+              aria-label={`View ${subject.subjectName} attendance details`}
+              onClick={() => {
+                setSelectedSubjectTab(String(idx));
+                subjectDetailsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+              }}
+              className="glass-card-hover w-full rounded-xl p-5 text-left animate-slide-up focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+              style={{ animationDelay: `${idx * 0.05}s` }}
+            >
               <div className="flex items-start justify-between">
                 <div className="flex-1 min-w-0">
                   <h3 className="text-sm font-semibold text-white truncate">{subject.subjectName}</h3>
@@ -262,7 +274,7 @@ export default function StudentDashboard() {
                 </div>
                 <CircularProgress percentage={subject.stats.percentage} status={subject.stats.status} />
               </div>
-            </div>
+            </button>
           ))}
         </div>
 
@@ -313,10 +325,10 @@ export default function StudentDashboard() {
         </div>
 
         {/* Detailed Subject Tabs */}
-        <div className="glass-card rounded-xl p-6">
+        <div ref={subjectDetailsRef} className="glass-card scroll-mt-24 rounded-xl p-6">
           <h2 className="text-sm font-semibold text-white mb-4">Subject Details & Simulator</h2>
-          <Tabs defaultValue="0" className="space-y-4">
-            <TabsList className="bg-white/5 border border-white/10 p-1 rounded-lg grid gap-1" style={{ gridTemplateColumns: `repeat(auto-fit, minmax(80px, 1fr))` }}>
+          <Tabs value={selectedSubjectTab} onValueChange={setSelectedSubjectTab} className="space-y-4">
+            <TabsList className="h-auto w-full grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-1 bg-white/5 border border-white/10 p-1 rounded-lg">
               {analytics.map((s, idx) => (
                 <TabsTrigger key={idx} value={String(idx)} className="text-[10px] data-[state=active]:bg-white/10 data-[state=active]:text-white rounded-md">
                   {s.subjectCode}
@@ -361,6 +373,27 @@ export default function StudentDashboard() {
                       <span className="text-sm font-medium text-white capitalize">{subject.trend.trend}</span>
                     </div>
                     <p className="text-xs text-slate-500 mt-2">{subject.trend.trendMessage}</p>
+                  </div>
+                </div>
+                <div className="mt-5 border-t border-white/10 pt-4">
+                  <h3 className="text-sm font-semibold text-white">Lecture history</h3>
+                  <div className="mt-3 max-h-80 space-y-2 overflow-y-auto pr-1">
+                    {(attendanceHistory[subject.subjectId] || []).slice().reverse().map((record: any, recordIndex: number) => (
+                      <div key={record.lectureId || `${record.date}-${recordIndex}`} className="flex items-center justify-between gap-4 rounded-md border border-white/10 bg-white/[0.03] px-3 py-3">
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-white">
+                            {new Date(`${record.date.slice(0, 10)}T00:00:00`).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}
+                          </p>
+                          <p className="mt-1 text-xs text-slate-400">{subject.subjectCode} · Lecture {record.lectureNumber}</p>
+                        </div>
+                        <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-medium ${record.status === 'present' ? 'bg-emerald-500/15 text-emerald-300' : 'bg-rose-500/15 text-rose-300'}`}>
+                          {record.status === 'present' ? 'Present' : 'Absent'}
+                        </span>
+                      </div>
+                    ))}
+                    {(attendanceHistory[subject.subjectId] || []).length === 0 && (
+                      <p className="py-4 text-sm text-slate-400">No lecture attendance records available.</p>
+                    )}
                   </div>
                 </div>
               </TabsContent>

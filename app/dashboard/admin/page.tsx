@@ -7,6 +7,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Label } from 'recharts';
 import { AlertCircle, LayoutDashboard, TrendingUp, Database, Users, BookOpen, GraduationCap, Calendar } from 'lucide-react';
 import AdminNav from '@/components/admin-nav';
+import AdminStudents from '@/components/admin-students';
 import { initializeDB } from '@/lib/db';
 
 export default function AdminDashboard() {
@@ -95,6 +96,7 @@ export default function AdminDashboard() {
             <TabsTrigger value="overview" className="text-xs data-[state=active]:bg-white/10 data-[state=active]:text-white rounded-md">Overview</TabsTrigger>
             <TabsTrigger value="trends" className="text-xs data-[state=active]:bg-white/10 data-[state=active]:text-white rounded-md">Trends</TabsTrigger>
             <TabsTrigger value="data" className="text-xs data-[state=active]:bg-white/10 data-[state=active]:text-white rounded-md">Data</TabsTrigger>
+            <TabsTrigger value="branches" className="text-xs data-[state=active]:bg-white/10 data-[state=active]:text-white rounded-md">Branches & Students</TabsTrigger>
           </TabsList>
 
           <TabsContent value="overview" className="space-y-6">
@@ -203,6 +205,10 @@ export default function AdminDashboard() {
                 System contains {stats.totalStudents} students across {stats.totalSubjects} subject sections with {stats.totalAttendance.toLocaleString()} attendance records.
               </p>
             </div>
+          </TabsContent>
+
+          <TabsContent value="branches">
+            <AdminStudents adminId={user?.id || ''} />
           </TabsContent>
         </Tabs>
       </main>
