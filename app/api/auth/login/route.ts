@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDB } from '@/lib/db';
+import { recordAudit } from '@/lib/audit';
 
 export async function POST(request: NextRequest) {
   try {
@@ -20,11 +21,24 @@ export async function POST(request: NextRequest) {
     );
 
     if (!user) {
+      recordAudit({
+        action: 'auth.failed',
+        summary: `Failed sign-in attempt for ${email}`,
+        metadata: { email: String(email).slice(0, 120) },
+      });
+
       return NextResponse.json(
         { error: 'Invalid credentials' },
         { status: 401 }
       );
     }
+
+    recordAudit({
+      action: 'auth.login',
+      summary: `${user.name} signed in`,
+      actorId: user.id,
+      metadata: { role: user.role },
+    });
 
     // Get additional user details based on role
     let roleData = null;

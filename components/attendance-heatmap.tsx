@@ -97,12 +97,12 @@ export default function AttendanceHeatmap({ attendanceHistory }: AttendanceHeatm
   }, [attendanceHistory]);
 
   const getCellColor = (pct: number, hasClass: boolean) => {
-    if (!hasClass) return 'bg-white/[0.03]';
-    if (pct >= 100) return 'bg-emerald-500';
+    if (!hasClass) return 'bg-white/[0.035]';
+    if (pct >= 100) return 'bg-emerald-400';
     if (pct >= 75) return 'bg-emerald-500/70';
-    if (pct >= 50) return 'bg-yellow-500/70';
-    if (pct >= 25) return 'bg-orange-500/70';
-    return 'bg-red-500/70';
+    if (pct >= 50) return 'bg-amber-400/65';
+    if (pct >= 25) return 'bg-orange-500/65';
+    return 'bg-rose-500/70';
   };
 
   const dayLabels = ['Mon', '', 'Wed', '', 'Fri', '', ''];
@@ -152,14 +152,14 @@ export default function AttendanceHeatmap({ attendanceHistory }: AttendanceHeatm
                         aria-label={day.hasClass
                           ? `${format(day.date, 'EEEE, dd MMM yyyy')}: ${day.presentCount} of ${day.totalCount} classes attended, ${Math.round(day.percentage)}%`
                           : `${format(day.date, 'EEEE, dd MMM yyyy')}: no classes scheduled`}
-                        className={`block h-4 w-4 appearance-none rounded-[4px] border-0 p-0 transition-[transform,box-shadow] duration-150 hover:z-10 hover:scale-110 hover:ring-2 hover:ring-white/60 focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white sm:h-5 sm:w-5 lg:h-6 lg:w-6 ${getCellColor(day.percentage, day.hasClass)}`}
+                        className={`block h-4 w-4 appearance-none rounded-md border-0 p-0 ring-1 ring-inset ring-white/[0.05] transition-all duration-200 hover:z-10 hover:scale-110 hover:ring-white/45 focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white sm:h-5 sm:w-5 lg:h-6 lg:w-6 ${getCellColor(day.percentage, day.hasClass)}`}
                       />
                     </TooltipTrigger>
                     <TooltipContent
                       side="top"
                       sideOffset={8}
                       collisionPadding={12}
-                      className="z-[100] w-72 max-w-[calc(100vw-2rem)] whitespace-normal break-words rounded-lg border border-white/15 bg-slate-950 px-3 py-2.5 text-left text-slate-100 shadow-2xl"
+                      className="z-[100] w-72 max-w-[calc(100vw-2rem)] whitespace-normal break-words rounded-xl border border-white/12 bg-[#0a0d16]/97 px-3.5 py-3 text-left text-slate-100 shadow-2xl backdrop-blur"
                     >
                       <p className="text-sm font-semibold leading-snug text-white">{format(day.date, 'EEEE, dd MMM yyyy')}</p>
                       {!day.hasClass ? (
@@ -171,7 +171,7 @@ export default function AttendanceHeatmap({ attendanceHistory }: AttendanceHeatm
                           </p>
                           {day.records.map((record, i) => (
                             <p key={record.lectureId || `${record.subjectCode}-${i}`} className={`break-words text-xs leading-relaxed ${record.status === 'present' ? 'text-emerald-300' : 'text-rose-300'}`}>
-                              {record.status === 'present' ? 'Present' : 'Absent'} · {record.subjectCode} · Lecture {record.lectureNumber}
+                              {record.status === 'present' ? 'Present' : 'Absent'} · {record.subjectName} · Lecture {record.lectureNumber}
                             </p>
                           ))}
                         </div>
@@ -185,21 +185,21 @@ export default function AttendanceHeatmap({ attendanceHistory }: AttendanceHeatm
         </div>
 
         {/* Color legend */}
-        <div className="flex items-center gap-2 pt-1 pl-9">
-          <span className="text-[11px] font-medium text-slate-400">Lower</span>
+        <div className="flex items-center gap-2 pl-9 pt-1">
+          <span className="text-[10.5px] font-medium text-slate-500">Lower</span>
           <div className="flex gap-1" aria-hidden="true">
-            <div className="h-3 w-3 rounded-[3px] bg-white/[0.06] ring-1 ring-white/10" />
-            <div className="h-3 w-3 rounded-[3px] bg-red-500/75" />
-            <div className="h-3 w-3 rounded-[3px] bg-orange-500/75" />
-            <div className="h-3 w-3 rounded-[3px] bg-yellow-500/75" />
-            <div className="h-3 w-3 rounded-[3px] bg-emerald-500/75" />
+            <div className="h-3 w-3 rounded-[3px] bg-white/[0.05] ring-1 ring-white/10" />
+            <div className="h-3 w-3 rounded-[3px] bg-rose-500/70" />
+            <div className="h-3 w-3 rounded-[3px] bg-orange-500/70" />
+            <div className="h-3 w-3 rounded-[3px] bg-amber-400/70" />
+            <div className="h-3 w-3 rounded-[3px] bg-emerald-500/80" />
             <div className="h-3 w-3 rounded-[3px] bg-emerald-400" />
           </div>
-          <span className="text-[11px] font-medium text-slate-400">Higher attendance</span>
+          <span className="text-[10.5px] font-medium text-slate-500">Higher attendance</span>
         </div>
       </div>
       <Dialog open={selectedDay !== null} onOpenChange={(open) => !open && setSelectedDay(null)}>
-        <DialogContent className="glass-card max-h-[85vh] overflow-y-auto border-white/10 bg-slate-950 text-white sm:max-w-xl">
+        <DialogContent className="max-h-[85vh] overflow-y-auto rounded-2xl text-white shadow-2xl sm:max-w-xl">
           {selectedDay && (
             <>
               <DialogHeader className="text-left">
@@ -217,7 +217,7 @@ export default function AttendanceHeatmap({ attendanceHistory }: AttendanceHeatm
                       <div className="min-w-0">
                         <p className="break-words text-sm font-medium text-white">{record.subjectName}</p>
                         <p className="mt-1 text-xs text-slate-400">
-                          {record.subjectCode}{record.lectureNumber ? ` · Lecture ${record.lectureNumber}` : ''}
+                          {record.subjectName}{record.lectureNumber ? ` · Lecture ${record.lectureNumber}` : ''}
                         </p>
                       </div>
                       <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-medium ${record.status === 'present' ? 'bg-emerald-500/15 text-emerald-300' : 'bg-rose-500/15 text-rose-300'}`}>

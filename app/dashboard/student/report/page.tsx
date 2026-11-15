@@ -3,10 +3,20 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
-import { Skeleton } from '@/components/ui/skeleton';
-import { FileText, Printer, CheckCircle2, AlertTriangle } from 'lucide-react';
-import StudentNav from '@/components/student-nav';
 import { format } from 'date-fns';
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Download,
+  FileText,
+  GraduationCap,
+  Printer,
+  Sparkles,
+} from 'lucide-react';
+import { toast } from 'sonner';
+import StudentNav from '@/components/student-nav';
+import Reveal from '@/components/reveal';
+import { Meter, Panel, StatusPill } from '@/components/ui-kit';
 
 interface SubjectAnalytics {
   subjectId: string;
@@ -22,18 +32,27 @@ interface SubjectAnalytics {
     statusLabel: string;
   };
   classesNeeded: { classesNeeded: number };
-  trend: { trend: 'improving' | 'declining' | 'stable'; trendMessage: string; };
+  trend: { trend: 'improving' | 'declining' | 'stable'; trendMessage: string };
 }
 
 export default function StudentReportPage() {
   const router = useRouter();
-  const { user, isAuthenticated, logout } = useAuth();
+  const { user, isAuthenticated, isLoading: isAuthLoading, logout } = useAuth();
   const [analytics, setAnalytics] = useState<SubjectAnalytics[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [studentInfo, setStudentInfo] = useState<any>(null);
+  const [generatedAt, setGeneratedAt] = useState('');
 
   useEffect(() => {
-    if (!isAuthenticated || user?.role !== 'student') { router.push('/'); return; }
+    setGeneratedAt(format(new Date(), 'dd MMMM yyyy, hh:mm a'));
+  }, []);
+
+  useEffect(() => {
+    if (isAuthLoading) return;
+    if (!isAuthenticated || user?.role !== 'student') {
+      router.push('/');
+      return;
+    }
     const fetchData = async () => {
       try {
         const roleData = JSON.parse(localStorage.getItem('mitaoe_roleData') || '{}');
@@ -42,154 +61,303 @@ export default function StudentReportPage() {
         if (!response.ok) throw new Error('Failed');
         const data = await response.json();
         setAnalytics(data.analytics || []);
-      } catch (err) { console.error('Report error:', err); }
-      finally { setIsLoading(false); }
+      } catch (err) {
+        console.error('Report error:', err);
+      } finally {
+        setIsLoading(false);
+      }
     };
     fetchData();
-  }, [isAuthenticated, user, router]);
+  }, [isAuthLoading, isAuthenticated, user, router]);
 
-  const avgAttendance = analytics.length > 0
-    ? Math.round((analytics.reduce((sum, s) => sum + s.stats.percentage, 0) / analytics.length) * 100) / 100 : 0;
-  const overallStatus = avgAttendance >= 85 ? 'Safe' : avgAttendance >= 75 ? 'Warning' : 'At Risk';
-  const atRiskSubjects = analytics.filter(s => s.stats.status === 'at-risk');
+  const avgAttendance =
+    analytics.length > 0
+      ? Math.round((analytics.reduce((sum, s) => sum + s.stats.percentage, 0) / analytics.length) * 100) /
+        100
+      : 0;
+  const overallStatus: 'safe' | 'warning' | 'at-risk' =
+    avgAttendance >= 85 ? 'safe' : avgAttendance >= 75 ? 'warning' : 'at-risk';
+  const overallLabel = avgAttendance >= 85 ? 'Safe' : avgAttendance >= 75 ? 'Warning' : 'At Risk';
+  const atRiskSubjects = analytics.filter((s) => s.stats.status === 'at-risk');
+  const totalLectures = analytics.reduce((sum, s) => sum + s.stats.totalLectures, 0);
+  const totalPresent = analytics.reduce((sum, s) => sum + s.stats.totalPresent, 0);
+
+  const downloadCsv = () => {
+    if (analytics.length === 0) return;
+
+    const rows: (string | number)[][] = [
+      ['Student', 'Branch', 'Year', 'Division'],
+      [
+        user?.name || '',
+        studentInfo?.branch || '',
+        studentInfo?.year ? `Year ${studentInfo.year}` : '',
+        studentInfo?.division || '',
+      ],
+      [],
+      ['Subject', 'Code', 'Teacher', 'Lectures', 'Present', 'Absent', 'Percentage', 'Status'],
+      ...analytics.map((subject) => [
+        subject.subjectName,
+        subject.subjectCode,
+        subject.teacherName,
+        subject.stats.totalLectures,
+        subject.stats.totalPresent,
+        subject.stats.totalAbsent,
+        subject.stats.percentage.toFixed(1),
+        subject.stats.statusLabel,
+      ]),
+      [],
+      ['Overall average', '', '', '', '', '', `${avgAttendance}%`, overallLabel],
+    ];
+
+    const csv = rows
+      .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(','))
+      .join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `attendance-report-${format(new Date(), 'yyyy-MM-dd')}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+    toast.success('Attendance report downloaded');
+  };
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen">
       <div className="print:hidden">
         <StudentNav userName={user?.name || 'Student'} onLogout={logout} />
       </div>
 
-      <main className="p-4 md:p-8 max-w-4xl mx-auto">
-        {/* Header */}
-        <div className="flex items-center justify-between mb-8 print:mb-4">
+      <main id="content" tabIndex={-1} className="mx-auto max-w-4xl px-4 pb-24 pt-8 md:px-6 focus:outline-none">
+        <header className="animate-slide-up mb-6 flex flex-wrap items-end justify-between gap-4 print:mb-4">
           <div>
-            <h1 className="text-2xl font-bold text-white flex items-center gap-2 print:text-black">
-              <FileText className="w-6 h-6 text-blue-400 print:hidden" />
-              Attendance Report
+            <p className="eyebrow flex items-center gap-1.5 print:hidden">
+              <Sparkles className="h-3 w-3 text-indigo-300" />
+              Official record
+            </p>
+            <h1 className="mt-2 text-[26px] font-semibold tracking-tight text-white print:text-black">
+              Attendance report
             </h1>
-            <p className="text-xs text-slate-400 mt-1 print:text-gray-600">
-              Generated on {format(new Date(), 'dd MMMM yyyy, hh:mm a')}
+            <p className="mt-1.5 text-xs text-slate-400 print:text-gray-600">
+              {generatedAt ? `Generated ${generatedAt}` : 'Generated on request'}
             </p>
           </div>
-          <button
-            onClick={() => window.print()}
-            className="gradient-btn text-white text-xs font-semibold px-4 py-2 rounded-lg flex items-center gap-1.5 print:hidden"
-          >
-            <Printer className="w-4 h-4" />
-            Print / PDF
-          </button>
-        </div>
+          <div className="flex items-center gap-2 print:hidden">
+            <button
+              onClick={downloadCsv}
+              disabled={isLoading || analytics.length === 0}
+              className="btn-soft inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-semibold disabled:opacity-50"
+            >
+              <Download className="h-4 w-4" />
+              CSV
+            </button>
+            <button
+              onClick={() => window.print()}
+              className="gradient-btn inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-semibold"
+            >
+              <Printer className="h-4 w-4" />
+              Print / PDF
+            </button>
+          </div>
+        </header>
 
         {isLoading ? (
-          <div className="space-y-4">{[...Array(4)].map((_, i) => <Skeleton key={i} className="h-24 w-full bg-white/5" />)}</div>
-        ) : (
-          <div className="space-y-6 print:space-y-4">
-            {/* Student Info */}
-            <div className="glass-card rounded-xl p-5 print:bg-white print:border print:border-gray-300 print:shadow-none">
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                {[
-                  { label: 'Student Name', value: user?.name },
-                  { label: 'Branch', value: studentInfo?.branch || 'N/A' },
-                  { label: 'Year', value: `Year ${studentInfo?.year || 'N/A'}` },
-                  { label: 'Division', value: studentInfo?.division || 'N/A' },
-                ].map((item, i) => (
-                  <div key={i}>
-                    <p className="text-[10px] uppercase tracking-wider text-slate-500 font-medium print:text-gray-500">{item.label}</p>
-                    <p className="text-sm font-semibold text-white mt-0.5 print:text-black">{item.value}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Summary */}
-            <div className="glass-card rounded-xl p-5 print:bg-white print:border print:border-gray-300 print:shadow-none">
-              <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-4 print:text-gray-500">Overall Summary</h2>
-              <div className="grid grid-cols-3 gap-6 text-center">
-                <div>
-                  <p className="text-3xl font-bold text-white print:text-black">{avgAttendance}%</p>
-                  <p className="text-[10px] text-slate-500 mt-1 print:text-gray-500">Overall Average</p>
-                </div>
-                <div>
-                  <span className={`inline-block px-3 py-1 rounded-full text-xs font-semibold ${
-                    overallStatus === 'Safe' ? 'status-safe' : overallStatus === 'Warning' ? 'status-warning' : 'status-danger'
-                  } print:border print:border-current`}>
-                    {overallStatus}
-                  </span>
-                  <p className="text-[10px] text-slate-500 mt-2 print:text-gray-500">Status</p>
-                </div>
-                <div>
-                  <p className="text-3xl font-bold text-white print:text-black">{analytics.length}</p>
-                  <p className="text-[10px] text-slate-500 mt-1 print:text-gray-500">Subjects</p>
-                </div>
-              </div>
-            </div>
-
-            {/* Subject Breakdown Table */}
-            <div className="glass-card rounded-xl p-5 print:bg-white print:border print:border-gray-300 print:shadow-none">
-              <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-4 print:text-gray-500">Subject-wise Breakdown</h2>
-              <div className="overflow-x-auto">
-                <table className="w-full table-premium">
-                  <thead>
-                    <tr>
-                      <th className="text-left text-[10px] font-medium text-slate-400 py-3 px-3 print:text-gray-600">Subject</th>
-                      <th className="text-right text-[10px] font-medium text-slate-400 py-3 px-3 print:text-gray-600">Lectures</th>
-                      <th className="text-right text-[10px] font-medium text-slate-400 py-3 px-3 print:text-gray-600">Present</th>
-                      <th className="text-right text-[10px] font-medium text-slate-400 py-3 px-3 print:text-gray-600">Absent</th>
-                      <th className="text-right text-[10px] font-medium text-slate-400 py-3 px-3 print:text-gray-600">%</th>
-                      <th className="text-[10px] font-medium text-slate-400 py-3 px-3 print:text-gray-600">Status</th>
-                      <th className="text-[10px] font-medium text-slate-400 py-3 px-3 print:text-gray-600">Trend</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {analytics.map((subject, idx) => (
-                      <tr key={idx}>
-                        <td className="py-3 px-3">
-                          <p className="text-sm font-medium text-white print:text-black">{subject.subjectName}</p>
-                          <p className="text-[10px] text-slate-500 print:text-gray-500">{subject.subjectCode} · {subject.teacherName}</p>
-                        </td>
-                        <td className="py-3 px-3 text-right text-xs text-slate-300 print:text-gray-700">{subject.stats.totalLectures}</td>
-                        <td className="py-3 px-3 text-right text-xs text-emerald-400 print:text-green-700">{subject.stats.totalPresent}</td>
-                        <td className="py-3 px-3 text-right text-xs text-red-400 print:text-red-700">{subject.stats.totalAbsent}</td>
-                        <td className="py-3 px-3 text-right text-sm font-bold text-white print:text-black">{subject.stats.percentage.toFixed(1)}%</td>
-                        <td className="py-3 px-3">
-                          <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
-                            subject.stats.status === 'safe' ? 'status-safe' :
-                            subject.stats.status === 'warning' ? 'status-warning' : 'status-danger'
-                          }`}>
-                            {subject.stats.statusLabel}
-                          </span>
-                        </td>
-                        <td className="py-3 px-3 text-xs text-slate-400 capitalize print:text-gray-600">{subject.trend.trend}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            {/* Risk Summary */}
-            {atRiskSubjects.length > 0 && (
-              <div className="rounded-xl p-5 bg-red-500/10 border border-red-500/20 print:bg-red-50 print:border-red-300">
-                <h2 className="text-xs font-semibold text-red-400 uppercase tracking-wider mb-3 flex items-center gap-2 print:text-red-700">
-                  <AlertTriangle className="w-4 h-4" /> Subjects Needing Attention
-                </h2>
-                <ul className="space-y-1.5">
-                  {atRiskSubjects.map((s) => (
-                    <li key={s.subjectId} className="text-xs text-red-300 print:text-red-700">
-                      <strong>{s.subjectName}</strong> — {s.stats.percentage.toFixed(1)}%
-                      {s.classesNeeded.classesNeeded > 0 && ` (need ${s.classesNeeded.classesNeeded} more for 75%)`}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            {/* Footer */}
-            <div className="text-center text-[10px] text-slate-600 pt-4 border-t border-white/5 print:border-gray-300 print:text-gray-500">
-              <p>MITAOE Smart Attendance & Academic Intelligence System</p>
-              <p className="mt-0.5">Auto-generated report. For discrepancies, contact your department coordinator.</p>
-            </div>
+          <div className="space-y-3">
+            {[...Array(4)].map((_, i) => (
+              <div key={i} className="h-28 rounded-2xl skeleton-sheen" />
+            ))}
           </div>
+        ) : (
+          <Reveal>
+            <Panel className="overflow-hidden print:border print:border-gray-300 print:shadow-none">
+              {/* Document header band */}
+              <div className="flex flex-wrap items-center justify-between gap-4 border-b border-white/[0.06] bg-gradient-to-r from-indigo-500/[0.1] via-transparent to-cyan-500/[0.06] px-6 py-5 print:bg-white">
+                <div className="flex items-center gap-3">
+                  <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 via-violet-500 to-cyan-400 shadow-lg shadow-indigo-500/25 print:shadow-none">
+                    <GraduationCap className="h-5 w-5 text-white" />
+                  </span>
+                  <div>
+                    <p className="text-sm font-semibold tracking-tight text-white print:text-black">
+                      MITAOE
+                    </p>
+                    <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-slate-500 print:text-gray-500">
+                      Academic intelligence
+                    </p>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <p className="flex items-center justify-end gap-1.5 text-[11px] font-medium text-slate-400 print:text-gray-600">
+                    <FileText className="h-3 w-3" />
+                    Attendance statement
+                  </p>
+                  <p className="mt-0.5 text-[10px] text-slate-600 print:text-gray-500">
+                    {generatedAt ? generatedAt.split(',')[0] : '—'}
+                  </p>
+                </div>
+              </div>
+
+              <div className="p-6">
+                {/* Student identity */}
+                <div className="grid grid-cols-2 gap-x-6 gap-y-4 md:grid-cols-4">
+                  {[
+                    { label: 'Student name', value: user?.name },
+                    { label: 'Branch', value: studentInfo?.branch || '—' },
+                    { label: 'Year', value: studentInfo?.year ? `Year ${studentInfo.year}` : '—' },
+                    { label: 'Division', value: studentInfo?.division || '—' },
+                  ].map((item) => (
+                    <div key={item.label}>
+                      <p className="text-[9.5px] font-semibold uppercase tracking-[0.12em] text-slate-500 print:text-gray-500">
+                        {item.label}
+                      </p>
+                      <p className="mt-1 text-[13px] font-medium text-white print:text-black">
+                        {item.value}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Summary */}
+                <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  <div className="surface-quiet rounded-xl p-4 print:border print:border-gray-200">
+                    <p className="text-[9.5px] font-semibold uppercase tracking-[0.12em] text-slate-500 print:text-gray-500">
+                      Overall average
+                    </p>
+                    <p className="tnum mt-2 text-[30px] font-semibold leading-none text-white print:text-black">
+                      {avgAttendance}
+                      <span className="text-sm text-slate-500">%</span>
+                    </p>
+                    <Meter
+                      value={avgAttendance}
+                      variant={overallStatus === 'safe' ? 'safe' : overallStatus === 'warning' ? 'warning' : 'danger'}
+                      className="mt-3 print:hidden"
+                    />
+                  </div>
+                  <div className="surface-quiet rounded-xl p-4 print:border print:border-gray-200">
+                    <p className="text-[9.5px] font-semibold uppercase tracking-[0.12em] text-slate-500 print:text-gray-500">
+                      Status
+                    </p>
+                    <div className="mt-3">
+                      <StatusPill status={overallStatus} label={overallLabel} />
+                    </div>
+                    <p className="mt-3 text-[10.5px] text-slate-500 print:text-gray-500">
+                      {totalPresent} of {totalLectures} lectures attended
+                    </p>
+                  </div>
+                  <div className="surface-quiet rounded-xl p-4 print:border print:border-gray-200">
+                    <p className="text-[9.5px] font-semibold uppercase tracking-[0.12em] text-slate-500 print:text-gray-500">
+                      Subjects
+                    </p>
+                    <p className="tnum mt-2 text-[30px] font-semibold leading-none text-white print:text-black">
+                      {analytics.length}
+                    </p>
+                    <p className="mt-3 text-[10.5px] text-slate-500 print:text-gray-500">
+                      {atRiskSubjects.length} needing attention
+                    </p>
+                  </div>
+                </div>
+
+                {/* Subject table */}
+                <div className="mt-7">
+                  <h2 className="mb-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500 print:text-gray-500">
+                    Subject-wise breakdown
+                  </h2>
+                  <div className="overflow-x-auto rounded-xl border border-white/[0.06] print:border-gray-200">
+                    <table className="table-premium w-full min-w-[560px]">
+                      <thead>
+                        <tr>
+                          {['Subject', 'Lectures', 'Present', 'Absent', '%', 'Status'].map(
+                            (heading, i) => (
+                              <th
+                                key={heading}
+                                className={`px-4 py-2.5 text-[9.5px] font-semibold uppercase tracking-[0.1em] text-slate-500 print:text-gray-600 ${
+                                  i === 0 ? 'text-left' : i === 5 ? 'text-center' : 'text-right'
+                                }`}
+                              >
+                                {heading}
+                              </th>
+                            )
+                          )}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {analytics.map((subject) => (
+                          <tr key={subject.subjectId}>
+                            <td className="px-4 py-3">
+                              <p className="text-xs font-medium text-white print:text-black">
+                                {subject.subjectName}
+                              </p>
+                              <p className="mt-0.5 text-[10px] text-slate-500 print:text-gray-500">
+                                {subject.subjectCode} · {subject.teacherName}
+                              </p>
+                            </td>
+                            <td className="tnum px-4 py-3 text-right text-[11px] text-slate-300 print:text-gray-700">
+                              {subject.stats.totalLectures}
+                            </td>
+                            <td className="tnum px-4 py-3 text-right text-[11px] text-emerald-300 print:text-green-700">
+                              {subject.stats.totalPresent}
+                            </td>
+                            <td className="tnum px-4 py-3 text-right text-[11px] text-rose-300 print:text-red-700">
+                              {subject.stats.totalAbsent}
+                            </td>
+                            <td className="tnum px-4 py-3 text-right text-xs font-semibold text-white print:text-black">
+                              {subject.stats.percentage.toFixed(1)}%
+                            </td>
+                            <td className="px-4 py-3 text-center">
+                              <StatusPill status={subject.stats.status} label={subject.stats.statusLabel} />
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* Attention callout */}
+                {atRiskSubjects.length > 0 && (
+                  <div className="mt-5 rounded-xl border border-rose-500/20 bg-rose-500/[0.07] p-4 print:border-red-300 print:bg-red-50">
+                    <h2 className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-rose-300 print:text-red-700">
+                      <AlertTriangle className="h-3.5 w-3.5" />
+                      Subjects needing attention
+                    </h2>
+                    <ul className="mt-2.5 space-y-1.5">
+                      {atRiskSubjects.map((s) => (
+                        <li
+                          key={s.subjectId}
+                          className="text-[11px] leading-relaxed text-rose-200/80 print:text-red-800"
+                        >
+                          <span className="font-semibold text-rose-100 print:text-red-900">
+                            {s.subjectName}
+                          </span>{' '}
+                          — {s.stats.percentage.toFixed(1)}%
+                          {s.classesNeeded.classesNeeded > 0 &&
+                            ` · ${s.classesNeeded.classesNeeded} more classes needed for 75%`}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {atRiskSubjects.length === 0 && (
+                  <div className="mt-5 flex items-center gap-2.5 rounded-xl border border-emerald-500/20 bg-emerald-500/[0.06] p-4 print:border-green-300 print:bg-green-50">
+                    <CheckCircle2 className="h-4 w-4 text-emerald-300 print:text-green-700" />
+                    <p className="text-[11px] text-emerald-200/80 print:text-green-800">
+                      All subjects are above the 75% attendance threshold. Keep it up.
+                    </p>
+                  </div>
+                )}
+
+                <div className="mt-6 border-t border-white/[0.06] pt-4 text-center print:border-gray-300">
+                  <p className="text-[10px] text-slate-600 print:text-gray-500">
+                    MITAOE Smart Attendance &amp; Academic Intelligence System
+                  </p>
+                  <p className="mt-0.5 text-[10px] text-slate-600 print:text-gray-500">
+                    Auto-generated statement. For discrepancies, contact your department
+                    coordinator.
+                  </p>
+                </div>
+              </div>
+            </Panel>
+          </Reveal>
         )}
       </main>
     </div>

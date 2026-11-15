@@ -1,14 +1,14 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { X, AlertTriangle, AlertCircle, TrendingUp, Flame } from 'lucide-react';
+import { X, AlertTriangle, TrendingUp, Flame } from 'lucide-react';
 
 interface SubjectAnalytics {
   subjectId: string;
   subjectName: string;
-  stats: { percentage: number; status: 'safe' | 'warning' | 'at-risk'; };
-  classesNeeded: { classesNeeded: number; };
-  trend: { trend: 'improving' | 'declining' | 'stable'; estimatedPercentage: number; };
+  stats: { percentage: number; status: 'safe' | 'warning' | 'at-risk' };
+  classesNeeded: { classesNeeded: number };
+  trend: { trend: 'improving' | 'declining' | 'stable'; estimatedPercentage: number };
 }
 
 interface NotificationsPanelProps {
@@ -23,7 +23,24 @@ interface Notification {
   icon: React.ReactNode;
 }
 
-export default function NotificationsPanel({ analytics, currentStreak = 0 }: NotificationsPanelProps) {
+const styles: Record<string, string> = {
+  danger: 'border-rose-500/20 bg-rose-500/[0.07] text-rose-100',
+  warning: 'border-amber-500/20 bg-amber-500/[0.07] text-amber-100',
+  success: 'border-emerald-500/20 bg-emerald-500/[0.07] text-emerald-100',
+  info: 'border-indigo-500/20 bg-indigo-500/[0.07] text-indigo-100',
+};
+
+const iconStyles: Record<string, string> = {
+  danger: 'text-rose-300',
+  warning: 'text-amber-300',
+  success: 'text-emerald-300',
+  info: 'text-indigo-300',
+};
+
+export default function NotificationsPanel({
+  analytics,
+  currentStreak = 0,
+}: NotificationsPanelProps) {
   const [dismissedIds, setDismissedIds] = useState<Set<string>>(new Set());
 
   const notifications = useMemo(() => {
@@ -33,27 +50,31 @@ export default function NotificationsPanel({ analytics, currentStreak = 0 }: Not
       if (subject.trend.trend === 'declining') {
         const drop = Math.round(subject.stats.percentage - subject.trend.estimatedPercentage);
         if (drop > 0) {
-          notifs.push({ id: `decline-${subject.subjectId}`, type: 'danger',
-            message: `${subject.subjectName} may drop by ${drop}% at current rate`,
-            icon: <AlertTriangle className="w-4 h-4" /> });
+          notifs.push({
+            id: `decline-${subject.subjectId}`,
+            type: 'danger',
+            message: `${subject.subjectName} may drop by ${drop}% at the current rate`,
+            icon: <AlertTriangle className="h-3.5 w-3.5" />,
+          });
         }
       }
-      if (subject.stats.status === 'at-risk' && subject.classesNeeded.classesNeeded > 0) {
-        notifs.push({ id: `risk-${subject.subjectId}`, type: 'warning',
-          message: `Need ${subject.classesNeeded.classesNeeded} more classes in ${subject.subjectName} for 75%`,
-          icon: <AlertCircle className="w-4 h-4" /> });
-      }
       if (subject.trend.trend === 'improving' && subject.stats.percentage > 75) {
-        notifs.push({ id: `improve-${subject.subjectId}`, type: 'success',
-          message: `${subject.subjectName} attendance is improving`,
-          icon: <TrendingUp className="w-4 h-4" /> });
+        notifs.push({
+          id: `improve-${subject.subjectId}`,
+          type: 'success',
+          message: `${subject.subjectName} attendance is trending up`,
+          icon: <TrendingUp className="h-3.5 w-3.5" />,
+        });
       }
     });
 
     if (currentStreak >= 5) {
-      notifs.push({ id: 'streak', type: 'info',
-        message: `${currentStreak}-day streak! Keep it going 🔥`,
-        icon: <Flame className="w-4 h-4" /> });
+      notifs.push({
+        id: 'streak',
+        type: 'info',
+        message: `${currentStreak}-day attendance streak — keep it going`,
+        icon: <Flame className="h-3.5 w-3.5" />,
+      });
     }
 
     return notifs;
@@ -62,26 +83,24 @@ export default function NotificationsPanel({ analytics, currentStreak = 0 }: Not
   const visible = notifications.filter((n) => !dismissedIds.has(n.id));
   if (visible.length === 0) return null;
 
-  const getStyle = (type: string) => {
-    switch (type) {
-      case 'danger': return 'bg-red-500/10 border-red-500/20 text-red-300';
-      case 'warning': return 'bg-yellow-500/10 border-yellow-500/20 text-yellow-300';
-      case 'success': return 'bg-emerald-500/10 border-emerald-500/20 text-emerald-300';
-      case 'info': return 'bg-blue-500/10 border-blue-500/20 text-blue-300';
-      default: return '';
-    }
-  };
-
   return (
-    <div className="space-y-2 mb-6">
-      {visible.slice(0, 3).map((notif) => (
-        <div key={notif.id} className={`flex items-center justify-between gap-3 px-4 py-2.5 rounded-xl border text-xs animate-slide-up ${getStyle(notif.type)}`}>
-          <div className="flex items-center gap-2 min-w-0">
-            {notif.icon}
-            <span className="truncate">{notif.message}</span>
+    <div className="space-y-2">
+      {visible.slice(0, 3).map((notif, index) => (
+        <div
+          key={notif.id}
+          className={`animate-slide-up flex items-center justify-between gap-3 rounded-xl border px-3.5 py-2.5 ${styles[notif.type]}`}
+          style={{ animationDelay: `${index * 0.05}s` }}
+        >
+          <div className="flex min-w-0 items-center gap-2.5">
+            <span className={`shrink-0 ${iconStyles[notif.type]}`}>{notif.icon}</span>
+            <span className="line-clamp-2 text-[11.5px] leading-relaxed">{notif.message}</span>
           </div>
-          <button onClick={() => setDismissedIds((prev) => new Set([...prev, notif.id]))} className="shrink-0 hover:opacity-60 transition">
-            <X className="w-3.5 h-3.5" />
+          <button
+            onClick={() => setDismissedIds((prev) => new Set([...prev, notif.id]))}
+            aria-label="Dismiss notification"
+            className="shrink-0 rounded-md p-1 opacity-50 transition-opacity hover:opacity-100"
+          >
+            <X className="h-3 w-3" />
           </button>
         </div>
       ))}

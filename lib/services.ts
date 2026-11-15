@@ -1,5 +1,6 @@
 // Intelligence and analytics services for MITAOE
 import { getDB } from './db';
+import { getIndexes } from './indexes';
 
 export interface AttendanceStats {
   totalLectures: number;
@@ -64,32 +65,10 @@ export function getSubjectDisplayName(subjectId: string): string {
 
 // ============= ATTENDANCE CALCULATIONS =============
 
-export function getAttendanceStats(
-  studentId: string,
-  subjectId?: string
-): AttendanceStats {
-  const db = getDB();
-  
-  let attendanceRecords = Array.from(db.attendance.values()).filter(
-    (a) => a.studentId === studentId
-  );
-
-  if (subjectId) {
-    const lecturesInSubject = Array.from(db.lectures.values())
-      .filter((l) => l.subjectId === subjectId)
-      .map((l) => l.id);
-    
-    attendanceRecords = attendanceRecords.filter((a) =>
-      lecturesInSubject.includes(a.lectureId)
-    );
-  }
-
-  const totalLectures = attendanceRecords.length;
-  const totalPresent = attendanceRecords.filter((a) => a.status === 'present').length;
+function buildStats(totalPresent: number, totalLectures: number): AttendanceStats {
   const totalAbsent = totalLectures - totalPresent;
-
   const percentage = totalLectures > 0 ? (totalPresent / totalLectures) * 100 : 0;
-  
+
   let status: 'safe' | 'warning' | 'at-risk';
   let statusLabel: string;
   let statusColor: string;
@@ -117,6 +96,35 @@ export function getAttendanceStats(
     statusLabel,
     statusColor,
   };
+}
+
+export function getAttendanceStats(
+  studentId: string,
+  subjectId?: string
+): AttendanceStats {
+  const { attendanceByStudent, lectureIdsBySubject } = getIndexes();
+  const records = attendanceByStudent.get(studentId) ?? [];
+
+  let totalLectures = 0;
+  let totalPresent = 0;
+
+  if (subjectId) {
+    const lectureIds = lectureIdsBySubject.get(subjectId);
+    if (!lectureIds) return buildStats(0, 0);
+
+    for (const record of records) {
+      if (!lectureIds.has(record.lectureId)) continue;
+      totalLectures++;
+      if (record.status === 'present') totalPresent++;
+    }
+  } else {
+    totalLectures = records.length;
+    for (const record of records) {
+      if (record.status === 'present') totalPresent++;
+    }
+  }
+
+  return buildStats(totalPresent, totalLectures);
 }
 
 // ============= CLASSES NEEDED CALCULATOR =============
@@ -159,11 +167,9 @@ export function analyzeTrend(
   subjectId: string,
   lookbackPeriod: number = 5
 ): PredictionResult {
-  const db = getDB();
+  const { lecturesBySubject, attendanceByStudent } = getIndexes();
 
-  const subjectLectures = Array.from(db.lectures.values())
-    .filter((l) => l.subjectId === subjectId)
-    .sort((a, b) => b.date.getTime() - a.date.getTime());
+  const subjectLectures = [...(lecturesBySubject.get(subjectId) ?? [])].reverse();
 
   if (subjectLectures.length < 10) {
     const stats = getAttendanceStats(studentId, subjectId);
@@ -178,29 +184,24 @@ export function analyzeTrend(
   const recentLectures = subjectLectures.slice(0, lookbackPeriod);
   const previousLectures = subjectLectures.slice(lookbackPeriod, lookbackPeriod * 2);
 
-  const recentAttendance = Array.from(db.attendance.values()).filter(
-    (a) =>
-      a.studentId === studentId &&
-      recentLectures.some((l) => l.id === a.lectureId)
+  const statusByLecture = new Map(
+    (attendanceByStudent.get(studentId) ?? []).map((record) => [
+      record.lectureId,
+      record.status,
+    ])
   );
 
-  const previousAttendance = Array.from(db.attendance.values()).filter(
-    (a) =>
-      a.studentId === studentId &&
-      previousLectures.some((l) => l.id === a.lectureId)
-  );
+  const presentRate = (lectures: typeof recentLectures, fallback: number) => {
+    if (lectures.length === 0) return fallback;
+    let present = 0;
+    for (const lecture of lectures) {
+      if (statusByLecture.get(lecture.id) === 'present') present++;
+    }
+    return present / lectures.length;
+  };
 
-  const recentRate =
-    recentLectures.length > 0
-      ? recentAttendance.filter((a) => a.status === 'present').length /
-        recentLectures.length
-      : 0;
-
-  const previousRate =
-    previousLectures.length > 0
-      ? previousAttendance.filter((a) => a.status === 'present').length /
-        previousLectures.length
-      : recentRate;
+  const recentRate = presentRate(recentLectures, 0);
+  const previousRate = presentRate(previousLectures, recentRate);
 
   let trend: 'improving' | 'declining' | 'stable';
   let trendMessage: string;
@@ -271,30 +272,30 @@ export function simulateMissingClasses(
 
 export function getSubjectAnalytics(studentId: string): SubjectAnalytics[] {
   const db = getDB();
+  const { enrollmentsByStudent, lecturesBySubject } = getIndexes();
 
-  const enrollments = Array.from(db.enrollments.values()).filter(
-    (e) => e.studentId === studentId
-  );
+  const enrollments = enrollmentsByStudent.get(studentId) ?? [];
 
   return enrollments
-    .map((enrollment) => {
-      const subject = db.subjects.get(enrollment.subjectId)!;
+    .flatMap((enrollment): SubjectAnalytics[] => {
+      const subject = db.subjects.get(enrollment.subjectId);
+      if (!subject) return [];
+
       const stats = getAttendanceStats(studentId, enrollment.subjectId);
       const teacherName = getTeacherNameForSubject(enrollment.subjectId);
+      const subjectLectures = lecturesBySubject.get(enrollment.subjectId) ?? [];
 
-      const subjectLectures = Array.from(db.lectures.values())
-        .filter((l) => l.subjectId === enrollment.subjectId)
-        .sort((a, b) => b.date.getTime() - a.date.getTime());
-
-      return {
-        subjectId: enrollment.subjectId,
-        subjectName: subject.name,
-        subjectCode: subject.code,
-        teacherName,
-        stats,
-        lastLectureDate: subjectLectures[0]?.date || null,
-        lectureCount: subjectLectures.length,
-      };
+      return [
+        {
+          subjectId: enrollment.subjectId,
+          subjectName: subject.name,
+          subjectCode: subject.code,
+          teacherName,
+          stats,
+          lastLectureDate: subjectLectures[subjectLectures.length - 1]?.date || null,
+          lectureCount: subjectLectures.length,
+        },
+      ];
     })
     .sort((a, b) => a.stats.percentage - b.stats.percentage);
 }
@@ -303,27 +304,39 @@ export function getSubjectAnalytics(studentId: string): SubjectAnalytics[] {
 
 export function getClassAnalytics(subjectId: string) {
   const db = getDB();
+  const { lecturesBySubject, enrollmentsBySubject, attendanceByLecture } = getIndexes();
 
-  const lectures = Array.from(db.lectures.values())
-    .filter((l) => l.subjectId === subjectId)
-    .sort((a, b) => b.date.getTime() - a.date.getTime());
+  const subject = db.subjects.get(subjectId);
+  if (!subject) {
+    return {
+      subjectId,
+      subjectName: 'Unknown subject',
+      subjectCode: '—',
+      subjectDisplayName: 'Unknown subject',
+      division: '',
+      year: 0,
+      totalStudents: 0,
+      classAverage: 0,
+      lowestPerformers: [],
+      dailyAttendance: [],
+      recentLectures: 0,
+    };
+  }
 
-  const subject = db.subjects.get(subjectId)!;
+  const lectures = [...(lecturesBySubject.get(subjectId) ?? [])].reverse();
+  const enrollments = enrollmentsBySubject.get(subjectId) ?? [];
+  const rollPrefix = subject.code.substring(0, 2);
 
-  const enrollments = Array.from(db.enrollments.values()).filter(
-    (e) => e.subjectId === subjectId
-  );
-
-  const studentStats = enrollments.map((enrollment) => {
-    const student = db.students.get(enrollment.studentId)!;
-    const user = db.users.get(student.userId)!;
+  const studentStats = enrollments.map((enrollment, index) => {
+    const student = db.students.get(enrollment.studentId);
+    const user = student ? db.users.get(student.userId) : undefined;
     const stats = getAttendanceStats(enrollment.studentId, subjectId);
 
     return {
       studentId: enrollment.studentId,
-      studentName: user.name,
-      rollNumber: `${subject.code.substring(0, 2)}${String(enrollments.indexOf(enrollment) + 1).padStart(3, '0')}`,
-      division: student.division,
+      studentName: user?.name || 'Unknown student',
+      rollNumber: `${rollPrefix}${String(index + 1).padStart(3, '0')}`,
+      division: student?.division || '',
       stats,
     };
   });
@@ -340,18 +353,19 @@ export function getClassAnalytics(subjectId: string) {
   // Daily attendance summary for last 10 lectures
   const recentLectures = lectures.slice(0, 10).reverse();
   const dailyAttendance = recentLectures.map((lecture) => {
-    const attendanceForLecture = Array.from(db.attendance.values()).filter(
-      (a) => a.lectureId === lecture.id && a.status === 'present'
-    );
+    const records = attendanceByLecture.get(lecture.id) ?? [];
+    let presentCount = 0;
+    for (const record of records) {
+      if (record.status === 'present') presentCount++;
+    }
 
     return {
       lectureNumber: lecture.lectureNumber,
       date: lecture.date,
-      presentCount: attendanceForLecture.length,
+      presentCount,
       totalCount: enrollments.length,
-      percentage: enrollments.length > 0 ? Math.round(
-        (attendanceForLecture.length / enrollments.length) * 100
-      ) : 0,
+      percentage:
+        enrollments.length > 0 ? Math.round((presentCount / enrollments.length) * 100) : 0,
     };
   });
 

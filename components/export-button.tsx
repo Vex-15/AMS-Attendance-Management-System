@@ -1,6 +1,7 @@
 'use client';
 
-import { Download } from 'lucide-react';
+import { useState } from 'react';
+import { Download, LoaderCircle } from 'lucide-react';
 import { toast } from 'sonner';
 
 interface ExportButtonProps {
@@ -10,7 +11,10 @@ interface ExportButtonProps {
 }
 
 export default function ExportButton({ subjectCode, subjectName, subjectId }: ExportButtonProps) {
+  const [isExporting, setIsExporting] = useState(false);
+
   const handleExport = async () => {
+    setIsExporting(true);
     try {
       const lecturesRes = await fetch(`/api/teacher/lectures?subjectId=${subjectId}`);
       if (!lecturesRes.ok) throw new Error('Failed');
@@ -62,13 +66,23 @@ export default function ExportButton({ subjectCode, subjectName, subjectId }: Ex
       toast.success(`CSV exported for ${subjectName}`);
     } catch (error) {
       toast.error('Failed to export CSV');
+    } finally {
+      setIsExporting(false);
     }
   };
 
   return (
-    <button onClick={handleExport} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-slate-300 glass-card hover:bg-white/10 transition">
-      <Download className="w-3.5 h-3.5" />
-      Export CSV
+    <button
+      onClick={handleExport}
+      disabled={isExporting}
+      className="btn-soft px-3.5 py-2 text-xs font-semibold disabled:opacity-60"
+    >
+      {isExporting ? (
+        <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+      ) : (
+        <Download className="h-3.5 w-3.5" />
+      )}
+      {isExporting ? 'Preparing…' : 'Export CSV'}
     </button>
   );
 }

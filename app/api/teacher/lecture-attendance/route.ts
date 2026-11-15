@@ -32,7 +32,11 @@ export async function GET(request: NextRequest) {
       (a) => a.lectureId === lectureId
     );
 
-    const students = enrollments.map((enrollment) => {
+    // Roll numbers must match the analytics table: subject-code prefix + roster position.
+    const subject = db.subjects.get(lecture.subjectId);
+    const rollPrefix = (subject?.code || 'ST').substring(0, 2).toUpperCase();
+
+    const students = enrollments.map((enrollment, index) => {
       const student = db.students.get(enrollment.studentId);
       const user = student ? db.users.get(student.userId) : null;
       const attendance = attendanceRecords.find(
@@ -42,7 +46,7 @@ export async function GET(request: NextRequest) {
       return {
         studentId: enrollment.studentId,
         studentName: user?.name || 'Unknown',
-        rollNumber: enrollment.studentId.replace('student-', 'CS'),
+        rollNumber: `${rollPrefix}${String(index + 1).padStart(3, '0')}`,
         division: student?.division || '',
         status: attendance?.status || null,
       };

@@ -1,4 +1,8 @@
-// In-memory database for MITAOE attendance system (no fs dependencies)
+// Database for MITAOE attendance system.
+// State lives in memory for fast reads and is persisted to data/db.json after
+// every mutation, so data survives restarts and can be inspected/seeded offline.
+import fs from 'node:fs';
+import path from 'node:path';
 
 // ============= DATABASE TYPES =============
 export interface User {
@@ -57,6 +61,18 @@ export interface Attendance {
   markedAt: Date;
 }
 
+export interface AuditEntry {
+  id: string;
+  action: string;
+  summary: string;
+  actorId: string;
+  actorName: string;
+  actorRole: 'student' | 'teacher' | 'admin' | 'system';
+  targetId?: string;
+  metadata?: Record<string, string | number | boolean>;
+  at: Date;
+}
+
 // ============= DATABASE STORE =============
 export interface Database {
   users: Map<string, User>;
@@ -66,13 +82,191 @@ export interface Database {
   enrollments: Map<string, Enrollment>;
   lectures: Map<string, Lecture>;
   attendance: Map<string, Attendance>;
+  /** Mutating actions, newest last, capped by lib/audit.ts. */
+  audit: Map<string, AuditEntry>;
+  /** Bumped on every mutation so derived indexes can detect staleness. */
+  revision: number;
 }
 
-let db: Database | null = null;
+const DATA_DIRECTORY = path.join(process.cwd(), 'data');
+export const DATA_FILE = path.join(DATA_DIRECTORY, 'db.json');
+
+/** How many students are seeded per branch/year/division section. */
+export const STUDENTS_PER_DIVISION = 12;
+
+const MAP_KEYS = [
+  'users',
+  'students',
+  'teachers',
+  'subjects',
+  'enrollments',
+  'lectures',
+  'attendance',
+] as const;
+
+type MapKey = (typeof MAP_KEYS)[number];
+
+const DATE_FIELDS: Record<MapKey, string[]> = {
+  users: ['createdAt'],
+  students: [],
+  teachers: [],
+  subjects: [],
+  enrollments: ['enrolledAt'],
+  lectures: ['date'],
+  attendance: ['markedAt'],
+};
+
+// Next.js compiles each route handler into its own module instance, so a plain
+// module-level singleton gives every route a *different* database. Anchoring the
+// store on globalThis keeps one shared instance for the whole server process,
+// which is what makes a lecture created in one route visible to every other.
+const globalForDb = globalThis as unknown as { __amsDatabase?: Database };
+
+let db: Database | null = globalForDb.__amsDatabase ?? null;
+
+// ============= SERIALIZATION =============
+
+function serializeDatabase(database: Database): string {
+  const payload: Record<string, Record<string, unknown>> = {};
+
+  for (const key of MAP_KEYS) {
+    const map = database[key] as unknown as Map<string, Record<string, unknown>>;
+    const entries: Record<string, unknown> = {};
+
+    for (const [id, value] of map) {
+      const copy: Record<string, unknown> = { ...value };
+      for (const field of DATE_FIELDS[key]) {
+        if (copy[field] instanceof Date) {
+          copy[field] = (copy[field] as Date).toISOString();
+        }
+      }
+      entries[id] = copy;
+    }
+
+    payload[key] = entries;
+  }
+
+  // The audit trail is a map too, but optional for databases written before it existed.
+  payload.audit = Object.fromEntries(
+    Array.from(database.audit, ([id, entry]) => [
+      id,
+      { ...entry, at: entry.at instanceof Date ? entry.at.toISOString() : entry.at },
+    ])
+  );
+
+  return JSON.stringify(payload);
+}
+
+function hydrateDatabase(raw: unknown): Database | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const parsed = raw as Record<string, unknown>;
+  if (!MAP_KEYS.every((key) => parsed[key] && typeof parsed[key] === 'object')) return null;
+
+  const database = {
+    users: new Map(),
+    students: new Map(),
+    teachers: new Map(),
+    subjects: new Map(),
+    enrollments: new Map(),
+    lectures: new Map(),
+    attendance: new Map(),
+    audit: new Map(),
+    revision: 0,
+  } as Database;
+
+  for (const key of MAP_KEYS) {
+    const entries = Object.entries(parsed[key] as Record<string, Record<string, unknown>>);
+    const map = database[key] as unknown as Map<string, Record<string, unknown>>;
+
+    for (const [id, value] of entries) {
+      const record: Record<string, unknown> = { ...value };
+      for (const field of DATE_FIELDS[key]) {
+        if (typeof record[field] === 'string') {
+          record[field] = new Date(record[field] as string);
+        }
+      }
+      map.set(id, record);
+    }
+  }
+
+  const auditEntries = (parsed.audit ?? {}) as Record<string, Record<string, unknown>>;
+  for (const [id, entry] of Object.entries(auditEntries)) {
+    database.audit.set(id, {
+      ...(entry as unknown as AuditEntry),
+      at: typeof entry.at === 'string' ? new Date(entry.at) : new Date(),
+    });
+  }
+
+  return database;
+}
+
+function loadFromDisk(): Database | null {
+  try {
+    if (!fs.existsSync(DATA_FILE)) return null;
+    const parsed = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+    const database = hydrateDatabase(parsed);
+    if (!database || database.users.size === 0) return null;
+    return database;
+  } catch (error) {
+    console.warn('[AMS] Could not read data/db.json — seeding a fresh database.', error);
+    return null;
+  }
+}
+
+function writeToDisk(database: Database): void {
+  try {
+    fs.mkdirSync(DATA_DIRECTORY, { recursive: true });
+    const temporaryFile = `${DATA_FILE}.tmp`;
+    fs.writeFileSync(temporaryFile, serializeDatabase(database));
+    fs.renameSync(temporaryFile, DATA_FILE);
+  } catch (error) {
+    console.error('[AMS] Failed to persist data/db.json.', error);
+  }
+}
+
+let saveTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Persists the store, coalescing bursts of writes (e.g. one attendance batch). */
+export function saveDB(): void {
+  const database = db;
+  if (!database) return;
+
+  database.revision += 1;
+
+  if (saveTimer) return;
+  saveTimer = setTimeout(() => {
+    saveTimer = null;
+    const current = getDB();
+    writeToDisk(current);
+  }, 250);
+}
+
+/** Writes immediately — used when the process is about to stop. */
+export function flushDB(): void {
+  if (saveTimer) {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+  }
+  if (db) writeToDisk(db);
+}
 
 // ============= INITIALIZATION =============
 export function initializeDB(): Database {
   if (db) return db;
+  if (globalForDb.__amsDatabase) {
+    db = globalForDb.__amsDatabase;
+    return db;
+  }
+
+  const fromDisk = loadFromDisk();
+  if (fromDisk) {
+    db = fromDisk;
+    globalForDb.__amsDatabase = db;
+    console.log(
+      `[AMS] Loaded ${db.students.size} students, ${db.lectures.size} lectures from data/db.json`
+    );
+    return db;
+  }
 
   db = {
     users: new Map(),
@@ -82,11 +276,14 @@ export function initializeDB(): Database {
     enrollments: new Map(),
     lectures: new Map(),
     attendance: new Map(),
+    audit: new Map(),
+    revision: 0,
   };
 
-  if (db.users.size === 0) {
-    seedDatabase(db);
-  }
+  seedDatabase(db);
+
+  globalForDb.__amsDatabase = db;
+  writeToDisk(db);
 
   return db;
 }
@@ -96,11 +293,6 @@ export function getDB(): Database {
     return initializeDB();
   }
   return db;
-}
-
-// No-op for in-memory DB — exists for API route compatibility
-export function saveDB(): void {
-  // In-memory DB is always "saved"
 }
 
 // ============= SUBJECT DEFINITIONS (5 per branch-year) =============
@@ -317,16 +509,16 @@ function seedDatabase(database: Database): void {
     }
   }
 
-  // ============= STUDENTS (8 per division) =============
+  // ============= STUDENTS (STUDENTS_PER_DIVISION per section) =============
   let studentIndex = 0;
   const students: Array<{ id: string; userId: string; branch: string; year: number; division: string }> = [];
 
   for (const branch of branches) {
     for (const year of [1, 2, 3, 4]) {
       for (const division of divisions) {
-        for (let j = 0; j < 8; j++) {
+        for (let j = 0; j < STUDENTS_PER_DIVISION; j++) {
           const firstName = indianFirstNames[studentIndex % indianFirstNames.length];
-          const lastName = lastNames[(studentIndex + j) % lastNames.length];
+          const lastName = lastNames[(studentIndex * 3 + j * 5) % lastNames.length];
           const name = `${firstName} ${lastName}`;
           const email = `${firstName.toLowerCase()}.${lastName.toLowerCase()}${studentIndex}@mitaoe.edu.in`;
 
@@ -369,34 +561,42 @@ function seedDatabase(database: Database): void {
     });
   });
 
-  // ============= LECTURES (30 per subject, weekdays only, going back ~10 weeks) =============
+  // ============= LECTURES (30 per subject, weekdays only, ending today) =============
+  // Timetables are anchored to the current date so the newest lecture is always
+  // the most recent weekday rather than drifting further into the past over time.
   const today = new Date();
   let lectureIdCounter = 0;
 
-  Array.from(database.subjects.values()).forEach((subject) => {
-    let lectureNum = 0;
-    let daysBack = 70; // ~10 weeks back
+  const recentWeekdays = (count: number): Date[] => {
+    const dates: Date[] = [];
+    let daysBack = 0;
 
-    while (lectureNum < 30 && daysBack >= 0) {
-      const lectureDate = new Date(today);
-      lectureDate.setDate(lectureDate.getDate() - daysBack);
-      lectureDate.setHours(9, 0, 0, 0);
+    while (dates.length < count) {
+      const candidate = new Date(today);
+      candidate.setDate(candidate.getDate() - daysBack);
+      candidate.setHours(9, 0, 0, 0);
 
-      const dayOfWeek = lectureDate.getDay();
-      // Only Mon-Fri (1-5)
-      if (dayOfWeek >= 1 && dayOfWeek <= 5) {
-        lectureNum++;
-        const lectureId = `lecture-${lectureIdCounter}`;
-        database.lectures.set(lectureId, {
-          id: lectureId,
-          subjectId: subject.id,
-          date: lectureDate,
-          lectureNumber: lectureNum,
-        });
-        lectureIdCounter++;
-      }
-      daysBack--;
+      const dayOfWeek = candidate.getDay();
+      if (dayOfWeek >= 1 && dayOfWeek <= 5) dates.push(candidate);
+      daysBack++;
     }
+
+    return dates.reverse(); // oldest first
+  };
+
+  const lectureDates = recentWeekdays(30);
+
+  Array.from(database.subjects.values()).forEach((subject) => {
+    lectureDates.forEach((lectureDate, index) => {
+      const lectureId = `lecture-${lectureIdCounter}`;
+      database.lectures.set(lectureId, {
+        id: lectureId,
+        subjectId: subject.id,
+        date: new Date(lectureDate),
+        lectureNumber: index + 1,
+      });
+      lectureIdCounter++;
+    });
   });
 
   // ============= ATTENDANCE DATA (realistic patterns) =============
@@ -467,7 +667,9 @@ function seedDatabase(database: Database): void {
     enrollmentCounts.set(e.studentId, (enrollmentCounts.get(e.studentId) || 0) + 1);
   });
 
-  console.log(`[AMS] Database seeded: ${studentIndex} students, ${teacherIndex} teachers, ${subjectIdCounter} subjects, ${lectureIdCounter} lectures`);
+  console.log(
+    `[AMS] Database seeded for ${today.toDateString()}: ${studentIndex} students, ${teacherIndex} teachers, ${subjectIdCounter} subjects, ${lectureIdCounter} lectures, ${database.attendance.size} attendance records`
+  );
   console.log(`[AMS] Enrollment verification: all students have 5 subjects = ${Array.from(enrollmentCounts.values()).every(c => c === 5)}`);
 }
 

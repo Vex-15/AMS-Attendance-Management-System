@@ -22,7 +22,7 @@ export default function StreakBadge({ attendanceHistory }: StreakBadgeProps) {
     });
 
     const sortedDates = Array.from(dateMap.entries())
-      .filter(([_, data]) => data.total > 0)
+      .filter(([, data]) => data.total > 0)
       .sort(([a], [b]) => a.localeCompare(b));
 
     if (sortedDates.length === 0) return { currentStreak: 0, maxStreak: 0 };
@@ -30,9 +30,13 @@ export default function StreakBadge({ attendanceHistory }: StreakBadgeProps) {
     let maxStreak = 0;
     let tempStreak = 0;
 
-    for (const [_, data] of sortedDates) {
-      if (data.present === data.total) { tempStreak++; maxStreak = Math.max(maxStreak, tempStreak); }
-      else { tempStreak = 0; }
+    for (const [, data] of sortedDates) {
+      if (data.present === data.total) {
+        tempStreak++;
+        maxStreak = Math.max(maxStreak, tempStreak);
+      } else {
+        tempStreak = 0;
+      }
     }
 
     let currentStreak = 0;
@@ -46,13 +50,15 @@ export default function StreakBadge({ attendanceHistory }: StreakBadgeProps) {
 
   return (
     <div className="flex items-center gap-2">
-      <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-orange-500/15 text-orange-400 border border-orange-500/20">
-        <Flame className="w-3.5 h-3.5" />
-        {currentStreak}d streak
+      <div className="inline-flex items-center gap-1.5 rounded-full border border-orange-400/20 bg-orange-500/10 px-3 py-1.5 text-[11px] font-semibold text-orange-200">
+        <Flame className={`h-3.5 w-3.5 ${currentStreak > 0 ? 'animate-bob' : 'opacity-50'}`} />
+        <span className="tnum">{currentStreak}d</span>
+        <span className="hidden font-medium text-orange-200/60 sm:inline">streak</span>
       </div>
-      <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-violet-500/15 text-violet-400 border border-violet-500/20">
-        <Trophy className="w-3.5 h-3.5" />
-        Best: {maxStreak}d
+      <div className="inline-flex items-center gap-1.5 rounded-full border border-violet-400/20 bg-violet-500/10 px-3 py-1.5 text-[11px] font-semibold text-violet-200">
+        <Trophy className="h-3.5 w-3.5" />
+        <span className="hidden font-medium text-violet-200/60 sm:inline">Best</span>
+        <span className="tnum">{maxStreak}d</span>
       </div>
     </div>
   );
