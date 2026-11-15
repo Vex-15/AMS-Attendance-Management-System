@@ -37,6 +37,7 @@ import {
 import { toast } from 'sonner';
 import StudentNav from '@/components/student-nav';
 import AttendanceHeatmap from '@/components/attendance-heatmap';
+import SubjectSparkline from '@/components/subject-sparkline';
 import AttendanceSimulator from '@/components/attendance-simulator';
 import StreakBadge from '@/components/streak-badge';
 import WeeklyDigest from '@/components/weekly-digest';
@@ -485,7 +486,13 @@ export default function StudentDashboard() {
                   className="mt-3.5"
                 />
 
-                <div className="mt-3 flex items-center justify-between text-[10.5px] text-slate-500">
+                <SubjectSparkline
+                  records={attendanceHistory[subject.subjectId] || []}
+                  status={subject.stats.status}
+                  className="mt-2"
+                />
+
+                <div className="mt-1.5 flex items-center justify-between text-[10.5px] text-slate-500">
                   <span className="tnum">
                     {subject.stats.totalPresent}/{subject.stats.totalLectures} attended
                   </span>
